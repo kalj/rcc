@@ -6,6 +6,7 @@ use std::fs;
 use std::error;
 use std::fmt;
 use std::path::{Path,PathBuf};
+use core::slice::Iter;
 
 #[derive(Debug,Copy,Clone)]
 enum Keyword {
@@ -162,6 +163,139 @@ fn tokenize(source: &str) -> Vec<Token>
     return result
 }
 
+#[derive(Debug)]
+enum Expression {
+    Constant(i64)
+}
+
+#[derive(Debug)]
+enum Statement {
+    Return(Expression)
+}
+
+#[derive(Debug)]
+enum FunctionDeclaration {
+    Function(String,Statement)
+}
+
+#[derive(Debug)]
+enum Program {
+    Program(FunctionDeclaration)
+}
+
+fn parse_expression(tokiter: &mut Iter<Token>) -> Expression {
+    // ensure first and only token is an int literal.
+    let tok = tokiter.next().unwrap();
+    let value = match tok {
+        Token::IntLiteral(v) => v,
+        _ => panic!("Invalid expression. Expected an integer literal, got '{}'.",tok)
+    };
+    return Expression::Constant(*value);
+}
+
+fn parse_statement(tokiter: &mut Iter<Token>) -> Statement {
+    // ensure first token is a Return keyword
+    let mut tok = tokiter.next().unwrap();
+    match tok {
+        Token::Keyword(Keyword::Return) => (),
+        _ => panic!("Invalid statement. Expected 'return' keyword, got '{}'.",tok)
+    }
+
+    let expression = parse_expression(tokiter);
+
+    // ensure last token is a semicolon
+    tok = tokiter.next().unwrap();
+    match tok {
+        Token::Semicolon => (),
+        _ => panic!("Invalid statement. Expected a final semicolon, got '{}'.",tok)
+    }
+
+    return Statement::Return(expression);
+}
+
+fn parse_function(tokiter: &mut Iter<Token>) -> FunctionDeclaration {
+
+    // ensure first token is an Int keyword
+    let mut tok = tokiter.next().unwrap();
+    match tok {
+        Token::Keyword(Keyword::Int) => (),
+        _ => panic!("Invalid function declaration. Expected return type, got '{}'.",tok)
+    }
+
+    // next token should be an identifier
+    tok = tokiter.next().unwrap();
+    let function_name = match tok {
+        Token::Identifier(ident) => ident,
+        _ => panic!("Invalid function declaration. Expected identifier, got '{}'.",tok)
+    };
+
+    // ensure next token is '('
+    tok = tokiter.next().unwrap();
+    match tok {
+        Token::Lparen => (),
+        _ => panic!("Invalid function declaration. Expected '(', got '{}'.",tok)
+    }
+
+    // ensure next token is ')'
+    tok = tokiter.next().unwrap();
+    match tok {
+        Token::Rparen => (),
+        _ => panic!("Invalid function declaration. Expected ')', got '{}'.",tok)
+    }
+
+    // ensure next token is '{'
+    tok = tokiter.next().unwrap();
+    match tok {
+        Token::Lbrace => (),
+        _ => panic!("Invalid function declaration. Expected '{{', got '{}'.",tok)
+    }
+
+    // parse statement
+    let statement = parse_statement(tokiter);
+
+    // ensure next token is '}'
+    tok = tokiter.next().unwrap();
+    match tok {
+        Token::Rbrace => (),
+        _ => panic!("Invalid function declaration. Expected '}}', got '{}'.",tok)
+    }
+
+    return FunctionDeclaration::Function(function_name.to_string(),statement)
+}
+
+fn parse_program(tokiter: &mut Iter<Token>) -> Program {
+    return Program::Program(parse_function(tokiter));
+}
+
+fn parse(tokens: &[Token]) -> Program
+{
+    let mut tokiter = tokens.iter();
+    return parse_program(&mut tokiter);
+}
+
+fn generate_statement_code(stmnt: Statement) -> Vec<String> {
+    let mut code = Vec::new();
+    match stmnt {
+        Statement::Return(Expression::Constant(val)) => {
+            code.push(format!("    movl    ${}, %eax\n",val).to_string());
+            code.push(format!("    ret\n").to_string());
+        }
+    }
+        return code;
+}
+
+fn generate_program_code(prog: Program) -> Vec<String> {
+    let mut code = Vec::new();
+    match prog {
+        Program::Program(FunctionDeclaration::Function(name,body)) => {
+            code.push(format!("    .globl {}\n",name).to_string());
+            code.push(format!("{}:\n",name).to_string());
+            code.append(&mut generate_statement_code(body));
+        }
+    }
+    return code;
+}
+
 fn main() {
     let matches = App::new("c-compiler")
         .arg(Arg::with_name("INPUT")
@@ -203,19 +337,17 @@ fn main() {
     let tokens = tokenize(&source);
 
     // println!("After tokenization:");
-
     // let tokenstrs: Vec<String> = tokens.iter().map(|t| {
     //     format!("{}",t)
     // }).collect();
-
     // println!("{}",tokenstrs.join(" "));
 
-    let program =
-"	.globl	main
-main:
-	movl	$2, %eax
-	ret
-";
+    let program = parse(&tokens);
 
-    fs::write(output_path, program).expect("Failed writing assembly output");
+    // println!("After parsing:");
+    // println!("{:?}",program);
+
+    let assembly_code = generate_program_code(program);
+
+    fs::write(output_path, assembly_code.join("")).expect("Failed writing assembly output");
 }
