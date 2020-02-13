@@ -21,6 +21,9 @@ enum Token {
     Rparen,
     Lbrace,
     Rbrace,
+    Minus,
+    Not,
+    Complement,
     Keyword(Keyword),
     Identifier(String),
     IntLiteral(i64),
@@ -34,6 +37,9 @@ impl fmt::Display for Token {
             Token::Lbrace => "{".to_string(),
             Token::Rbrace => "}".to_string(),
             Token::Semicolon => ";".to_string(),
+            Token::Minus => "-".to_string(),
+            Token::Not => "!".to_string(),
+            Token::Complement => "~".to_string(),
             Token::Keyword(kw) => match kw {
                 Keyword::Int => "int".to_string(),
                 Keyword::Return => "return".to_string()
@@ -47,11 +53,11 @@ impl fmt::Display for Token {
 
 fn token_length(tok: &Token) -> usize {
     match tok {
-        Token::Lparen => 1,
-        Token::Rparen => 1,
-        Token::Lbrace => 1,
-        Token::Rbrace => 1,
-        Token::Semicolon => 1,
+        Token::Lparen|Token::Rparen|
+        Token::Lbrace|Token::Rbrace|
+        Token::Minus|Token::Not|Token::Complement|
+        Token::Semicolon
+            => 1,
         Token::Keyword(kw) => match kw {
             Keyword::Int => 3,
             Keyword::Return => 6
@@ -68,6 +74,9 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::Lbrace => r"^\{",
         Token::Rbrace => r"^\}",
         Token::Semicolon => r"^;",
+        Token::Minus => r"^-",
+        Token::Not => r"^!",
+        Token::Complement => r"^~",
         Token::Keyword(kw) => match kw {
             Keyword::Int => r"^int\W",
             Keyword::Return => r"^return\W"
@@ -100,6 +109,8 @@ fn get_token(source: &str, cursor: usize) -> Result<Token,TokenError>
     let toktypes = [Token::Semicolon,
                     Token::Lparen, Token::Rparen,
                     Token::Lbrace, Token::Rbrace,
+                    Token::Lbrace, Token::Rbrace,
+                    Token::Minus,Token::Not,Token::Complement,
                     Token::Keyword(Keyword::Int),
                     Token::Keyword(Keyword::Return),
                     Token::Identifier("a".to_string()),
@@ -131,6 +142,9 @@ fn get_token(source: &str, cursor: usize) -> Result<Token,TokenError>
                     Token::Lbrace => Ok(Token::Lbrace),
                     Token::Rbrace => Ok(Token::Rbrace),
                     Token::Semicolon => Ok(Token::Semicolon),
+                    Token::Minus => Ok(Token::Minus),
+                    Token::Not => Ok(Token::Not),
+                    Token::Complement => Ok(Token::Complement),
                     Token::Keyword(kw) => Ok(Token::Keyword(*kw))
                 }
         }
@@ -164,7 +178,15 @@ fn tokenize(source: &str) -> Vec<Token>
 }
 
 #[derive(Debug)]
+enum UnaryOp {
+    Negate,
+    Not,
+    Complement
+}
+
+#[derive(Debug)]
 enum Expression {
+    UnaryOp(UnaryOp,Box<Expression>),
     Constant(i64)
 }
 
@@ -186,11 +208,13 @@ enum Program {
 fn parse_expression(tokiter: &mut Iter<Token>) -> Expression {
     // ensure first and only token is an int literal.
     let tok = tokiter.next().unwrap();
-    let value = match tok {
-        Token::IntLiteral(v) => v,
+    match tok {
+        Token::IntLiteral(v) => Expression::Constant(*v),
+        Token::Minus => Expression::UnaryOp(UnaryOp::Negate,Box::new(parse_expression(tokiter))),
+        Token::Not => Expression::UnaryOp(UnaryOp::Not,Box::new(parse_expression(tokiter))),
+        Token::Complement => Expression::UnaryOp(UnaryOp::Complement,Box::new(parse_expression(tokiter))),
         _ => panic!("Invalid expression. Expected an integer literal, got '{}'.",tok)
-    };
-    return Expression::Constant(*value);
+    }
 }
 
 fn parse_statement(tokiter: &mut Iter<Token>) -> Statement {
@@ -272,16 +296,39 @@ fn parse(tokens: &[Token]) -> Program
     let mut tokiter = tokens.iter();
     return parse_program(&mut tokiter);
 }
+fn generate_expression_code(expr: Expression) -> Vec<String> {
+    let mut code = Vec::new();
+    match expr {
+        Expression::UnaryOp(UnaryOp::Negate,expr) => {
+            code = generate_expression_code(*expr);
+            code.push("    neg     %eax\n".to_string());
+        }
+        Expression::UnaryOp(UnaryOp::Not,expr) => {
+            code = generate_expression_code(*expr);
+            code.push("    cmpl   $0, %eax\n".to_string());
+            code.push("    movl   $0, %eax\n".to_string());
+            code.push("    sete   %al\n".to_string());
+        }
+        Expression::UnaryOp(UnaryOp::Complement,expr) => {
+            code = generate_expression_code(*expr);
+            code.push("    not     %eax\n".to_string());
+        }
+        Expression::Constant(val) => {
+            code.push(format!("    movl    ${}, %eax\n",val).to_string());
+        }
+    }
+    return code;
+}
 
 fn generate_statement_code(stmnt: Statement) -> Vec<String> {
-    let mut code = Vec::new();
+    let mut code;// = Vec::new();
     match stmnt {
-        Statement::Return(Expression::Constant(val)) => {
-            code.push(format!("    movl    ${}, %eax\n",val).to_string());
+        Statement::Return(expr) => {
+            code = generate_expression_code(expr);
             code.push(format!("    ret\n").to_string());
         }
     }
-        return code;
+    return code;
 }
 
 fn generate_program_code(prog: Program) -> Vec<String> {
