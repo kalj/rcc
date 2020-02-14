@@ -7,6 +7,7 @@ use std::error;
 use std::fmt;
 use std::path::{Path,PathBuf};
 use core::slice::Iter;
+use std::iter::Peekable;
 
 #[derive(Debug,Copy,Clone)]
 enum Keyword {
@@ -14,13 +15,16 @@ enum Keyword {
     Return
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 enum Token {
     Semicolon,
     Lparen,
     Rparen,
     Lbrace,
     Rbrace,
+    Multiplication,
+    Division,
+    Plus,
     Minus,
     Not,
     Complement,
@@ -37,6 +41,9 @@ impl fmt::Display for Token {
             Token::Lbrace => "{".to_string(),
             Token::Rbrace => "}".to_string(),
             Token::Semicolon => ";".to_string(),
+            Token::Multiplication => "*".to_string(),
+            Token::Division => "/".to_string(),
+            Token::Plus => "+".to_string(),
             Token::Minus => "-".to_string(),
             Token::Not => "!".to_string(),
             Token::Complement => "~".to_string(),
@@ -55,7 +62,9 @@ fn token_length(tok: &Token) -> usize {
     match tok {
         Token::Lparen|Token::Rparen|
         Token::Lbrace|Token::Rbrace|
-        Token::Minus|Token::Not|Token::Complement|
+        Token::Multiplication|Token::Division|
+        Token::Plus|Token::Minus|
+        Token::Not|Token::Complement|
         Token::Semicolon
             => 1,
         Token::Keyword(kw) => match kw {
@@ -74,6 +83,9 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::Lbrace => r"^\{",
         Token::Rbrace => r"^\}",
         Token::Semicolon => r"^;",
+        Token::Multiplication => r"^\*",
+        Token::Division => r"^/",
+        Token::Plus => r"^\+",
         Token::Minus => r"^-",
         Token::Not => r"^!",
         Token::Complement => r"^~",
@@ -110,7 +122,9 @@ fn get_token(source: &str, cursor: usize) -> Result<Token,TokenError>
                     Token::Lparen, Token::Rparen,
                     Token::Lbrace, Token::Rbrace,
                     Token::Lbrace, Token::Rbrace,
-                    Token::Minus,Token::Not,Token::Complement,
+                    Token::Multiplication, Token::Division,
+                    Token::Plus, Token::Minus,
+                    Token::Not, Token::Complement,
                     Token::Keyword(Keyword::Int),
                     Token::Keyword(Keyword::Return),
                     Token::Identifier("a".to_string()),
@@ -119,33 +133,32 @@ fn get_token(source: &str, cursor: usize) -> Result<Token,TokenError>
     for t in toktypes.iter() {
 
         let re = Regex::new(get_token_pattern(t)).unwrap();
-        if let Some(caps) = re.captures(&source[cursor..])
+        if let Some(captures) = re.captures(&source[cursor..])
         {
             return
                 match t {
                     Token::Identifier(_) => {
-                        let ident_cap = caps.get(1).expect("asdfb");
+                        let ident_cap = captures.get(1).expect("asdfb");
                         let ident = ident_cap.as_str().to_string();
                         Ok(Token::Identifier(ident))
                     }
 
                     Token::IntLiteral(_) => {
-                        let value: i64 = caps.get(1)
+                        let value: i64 = captures.get(1)
                             .unwrap()
                             .as_str()
                             .parse()
                             .unwrap();
                         Ok(Token::IntLiteral(value))
                     }
-                    Token::Lparen => Ok(Token::Lparen),
-                    Token::Rparen => Ok(Token::Rparen),
-                    Token::Lbrace => Ok(Token::Lbrace),
-                    Token::Rbrace => Ok(Token::Rbrace),
-                    Token::Semicolon => Ok(Token::Semicolon),
-                    Token::Minus => Ok(Token::Minus),
-                    Token::Not => Ok(Token::Not),
-                    Token::Complement => Ok(Token::Complement),
-                    Token::Keyword(kw) => Ok(Token::Keyword(*kw))
+                    Token::Keyword(kw) => Ok(Token::Keyword(*kw)),
+                    Token::Lparen|Token::Rparen|
+                    Token::Lbrace|Token::Rbrace|
+                    Token::Semicolon|
+                    Token::Multiplication|Token::Division|
+                    Token::Plus|Token::Minus|
+                    Token::Not|Token::Complement => Ok(t.clone()),
+                    // _ => Ok(t)
                 }
         }
     }
@@ -178,6 +191,15 @@ fn tokenize(source: &str) -> Vec<Token>
 }
 
 #[derive(Debug)]
+enum BinaryOp {
+    Addition,
+    Subtraction,
+    Multiplication,
+    Division
+}
+
+
+#[derive(Debug)]
 enum UnaryOp {
     Negate,
     Not,
@@ -186,6 +208,7 @@ enum UnaryOp {
 
 #[derive(Debug)]
 enum Expression {
+    BinaryOp(BinaryOp,Box<Expression>,Box<Expression>),
     UnaryOp(UnaryOp,Box<Expression>),
     Constant(i64)
 }
@@ -205,19 +228,63 @@ enum Program {
     Program(FunctionDeclaration)
 }
 
-fn parse_expression(tokiter: &mut Iter<Token>) -> Expression {
-    // ensure first and only token is an int literal.
-    let tok = tokiter.next().unwrap();
+
+fn parse_factor(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut tok = tokiter.next().unwrap();
     match tok {
+        Token::Lparen => {
+            let subexpr = parse_expression(tokiter);
+            tok = tokiter.next().unwrap();
+            if let Token::Rparen = tok {
+                subexpr
+            }
+            else {
+                panic!("Missing closing parenthesis after expression, got '{}'.",tok)
+            }
+        },
         Token::IntLiteral(v) => Expression::Constant(*v),
-        Token::Minus => Expression::UnaryOp(UnaryOp::Negate,Box::new(parse_expression(tokiter))),
-        Token::Not => Expression::UnaryOp(UnaryOp::Not,Box::new(parse_expression(tokiter))),
-        Token::Complement => Expression::UnaryOp(UnaryOp::Complement,Box::new(parse_expression(tokiter))),
-        _ => panic!("Invalid expression. Expected an integer literal, got '{}'.",tok)
+        Token::Minus => Expression::UnaryOp(UnaryOp::Negate,Box::new(parse_factor(tokiter))),
+        Token::Not => Expression::UnaryOp(UnaryOp::Not,Box::new(parse_factor(tokiter))),
+        Token::Complement => Expression::UnaryOp(UnaryOp::Complement,Box::new(parse_factor(tokiter))),
+        _ => panic!("Invalid token for factor. Expected '(', '-', '!', '~', or an int literal, got '{}'.",tok)
     }
 }
 
-fn parse_statement(tokiter: &mut Iter<Token>) -> Statement {
+fn parse_term(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut factor = parse_factor(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        match tok {
+            Token::Multiplication|Token::Division => {
+                let op = if let Token::Multiplication = tok { BinaryOp::Multiplication } else { BinaryOp::Division};
+                tokiter.next(); // consume
+                let next_factor = parse_factor(tokiter);
+                factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
+            }
+            _ => { break; }
+        }
+    }
+
+    return factor;
+}
+
+fn parse_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut term = parse_term(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        match tok {
+            Token::Minus|Token::Plus => {
+                let op = if let Token::Minus = tok { BinaryOp::Subtraction } else { BinaryOp::Addition};
+                tokiter.next(); // consume
+                let next_term = parse_term(tokiter);
+                term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
+            }
+            _ => { break; }
+        }
+    }
+    return term;
+}
+
+
+fn parse_statement(tokiter: &mut Peekable<Iter<Token>>) -> Statement {
     // ensure first token is a Return keyword
     let mut tok = tokiter.next().unwrap();
     match tok {
@@ -237,7 +304,7 @@ fn parse_statement(tokiter: &mut Iter<Token>) -> Statement {
     return Statement::Return(expression);
 }
 
-fn parse_function(tokiter: &mut Iter<Token>) -> FunctionDeclaration {
+fn parse_function(tokiter: &mut Peekable<Iter<Token>>) -> FunctionDeclaration {
 
     // ensure first token is an Int keyword
     let mut tok = tokiter.next().unwrap();
@@ -287,13 +354,13 @@ fn parse_function(tokiter: &mut Iter<Token>) -> FunctionDeclaration {
     return FunctionDeclaration::Function(function_name.to_string(),statement)
 }
 
-fn parse_program(tokiter: &mut Iter<Token>) -> Program {
+fn parse_program(tokiter: &mut Peekable<Iter<Token>>) -> Program {
     return Program::Program(parse_function(tokiter));
 }
 
 fn parse(tokens: &[Token]) -> Program
 {
-    let mut tokiter = tokens.iter();
+    let mut tokiter = tokens.iter().peekable();
     return parse_program(&mut tokiter);
 }
 
@@ -329,6 +396,39 @@ impl Code {
 fn generate_expression_code(expr: &Expression) -> Code {
     let mut code = Code::new();
     match expr {
+        Expression::BinaryOp(BinaryOp::Addition,e1,e2) => {
+            code = generate_expression_code(e1);
+            code.push("    push   %eax");
+            code.append(generate_expression_code(e2));
+            code.push("    add    (%esp), %eax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
+            code.push("    add    $4, %esp");     // restore stack pointer
+        }
+        Expression::BinaryOp(BinaryOp::Subtraction,e1,e2) => {
+            code = generate_expression_code(e1);
+            code.push("    push   %eax");
+            code.append(generate_expression_code(e2));
+            code.push("    push   %eax");          // push second operand on stack
+            code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
+            code.push("    sub    (%esp), %eax");  // subtract, %eax-(%esp)->%eax
+            code.push("    add    $8, %esp");      // restore stack pointer
+        }
+        Expression::BinaryOp(BinaryOp::Multiplication,e1,e2) => {
+            code = generate_expression_code(e1);
+            code.push("    push   %eax");
+            code.append(generate_expression_code(e2));
+            code.push("    imul   (%esp), %eax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
+            code.push("    add    $4, %esp");     // restore stack pointer
+        }
+        Expression::BinaryOp(BinaryOp::Division,e1,e2) => {
+            code = generate_expression_code(e1);
+            code.push("    push   %eax");
+            code.append(generate_expression_code(e2));
+            code.push("    push   %eax");          // push second operand on stack
+            code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
+            code.push("    cdq");
+            code.push("    idivl  (%esp)");        // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
+            code.push("    add    $8, %esp");      // restore stack pointer
+        }
         Expression::UnaryOp(UnaryOp::Negate,expr) => {
             code = generate_expression_code(expr);
             code.push("    neg    %eax");
