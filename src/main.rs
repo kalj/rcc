@@ -296,48 +296,78 @@ fn parse(tokens: &[Token]) -> Program
     let mut tokiter = tokens.iter();
     return parse_program(&mut tokiter);
 }
-fn generate_expression_code(expr: Expression) -> Vec<String> {
-    let mut code = Vec::new();
+
+struct Code {
+    code: Vec<String>
+}
+
+impl Code {
+    fn new() -> Code{
+        Code { code:Vec::new() }
+    }
+
+    fn pushs(&mut self, mut line: String) {
+        line.push('\n');
+        self.code.push(line);
+    }
+
+    fn push(&mut self, line: &str) {
+        self.pushs(line.to_string())
+    }
+
+    fn append(&mut self, mut more: Code) {
+        self.code.append(&mut more.code);
+    }
+
+    fn get_str(self) -> String {
+        let mut s = self.code.join("\n");
+        s.push('\n');
+        return s
+    }
+}
+
+fn generate_expression_code(expr: &Expression) -> Code {
+    let mut code = Code::new();
     match expr {
         Expression::UnaryOp(UnaryOp::Negate,expr) => {
-            code = generate_expression_code(*expr);
-            code.push("    neg     %eax\n".to_string());
+            code = generate_expression_code(expr);
+            code.push("    neg    %eax");
         }
         Expression::UnaryOp(UnaryOp::Not,expr) => {
-            code = generate_expression_code(*expr);
-            code.push("    cmpl   $0, %eax\n".to_string());
-            code.push("    movl   $0, %eax\n".to_string());
-            code.push("    sete   %al\n".to_string());
+            code = generate_expression_code(expr);
+            code.push("    cmpl   $0, %eax");
+            code.push("    movl   $0, %eax");
+            code.push("    sete   %al");
         }
         Expression::UnaryOp(UnaryOp::Complement,expr) => {
-            code = generate_expression_code(*expr);
-            code.push("    not     %eax\n".to_string());
+            code = generate_expression_code(expr);
+            code.push("    not    %eax");
         }
         Expression::Constant(val) => {
-            code.push(format!("    movl    ${}, %eax\n",val).to_string());
+            code.pushs(format!("    mov    ${}, %eax",val));
         }
     }
     return code;
 }
 
-fn generate_statement_code(stmnt: Statement) -> Vec<String> {
+fn generate_statement_code(stmnt: Statement) -> Code {
     let mut code;// = Vec::new();
     match stmnt {
         Statement::Return(expr) => {
-            code = generate_expression_code(expr);
-            code.push(format!("    ret\n").to_string());
+            code = generate_expression_code(&expr);
+            code.push("    ret");
         }
     }
     return code;
 }
 
-fn generate_program_code(prog: Program) -> Vec<String> {
-    let mut code = Vec::new();
+fn generate_program_code(prog: Program) -> Code {
+    let mut code = Code::new();
     match prog {
         Program::Program(FunctionDeclaration::Function(name,body)) => {
-            code.push(format!("    .globl {}\n",name).to_string());
-            code.push(format!("{}:\n",name).to_string());
-            code.append(&mut generate_statement_code(body));
+            code.pushs(format!("    .globl {}",name));
+            code.pushs(format!("{}:",name));
+            code.append(generate_statement_code(body));
         }
     }
     return code;
@@ -396,5 +426,5 @@ fn main() {
 
     let assembly_code = generate_program_code(program);
 
-    fs::write(output_path, assembly_code.join("")).expect("Failed writing assembly output");
+    fs::write(output_path, assembly_code.get_str()).expect("Failed writing assembly output");
 }
