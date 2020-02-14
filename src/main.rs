@@ -229,6 +229,44 @@ enum Program {
 }
 
 
+fn print_expression(expr: &Expression, lvl: i32) {
+    match expr {
+        Expression::BinaryOp(binop, exp1, exp2) => {
+            println!("{:<1$}BinaryOp {2:?} {{", "",(lvl*2) as usize, binop);
+            print_expression(exp1,lvl+1);
+            print_expression(exp2,lvl+1);
+            println!("{:<1$}}}", "",(lvl*2) as usize);
+
+        },
+        Expression::UnaryOp(unop,exp) => {
+            println!("{:<1$}UnaryOp {2:?} {{", "",(lvl*2) as usize, unop);
+            print_expression(exp,lvl+1);
+            println!("{:<1$}}}", "",(lvl*2) as usize);
+        },
+        Expression::Constant(val) => {
+            println!("{0:<1$}Constant {2}", "",(lvl*2) as usize, val);
+        }
+    }
+}
+
+fn print_statement(stmt: &Statement, lvl: i32) {
+    let Statement::Return(expr) = stmt;
+
+    println!("{: <1$}Return {{", "",(lvl*2) as usize);
+    print_expression(expr,lvl+1);
+    println!("{: <1$}}}", "", (lvl*2) as usize);
+}
+
+fn print_program(prog: &Program) {
+    let lvl = 0;
+    println!("Program {{");
+    let Program::Program(FunctionDeclaration::Function(name,stmt)) = prog;
+    println!("  Function \"{}\" {{",name);
+    print_statement(stmt,lvl+2);
+    println!("  }}");
+    println!("}}");
+}
+
 fn parse_factor(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
     let mut tok = tokiter.next().unwrap();
     match tok {
@@ -483,10 +521,16 @@ fn main() {
              .long("output")
              .value_name("OUTPUT")
              .help("The output assembly file (INPUT with suffix .s by default)"))
+        .arg(Arg::with_name("verbose")
+             .short("v")
+             .long("verbose")
+             .help("Enable verbose output"))
         .get_matches();
 
     let source_filename = matches.value_of("INPUT").unwrap();
     let source_path     = Path::new(source_filename);
+
+    let verbose = matches.is_present("verbose");
 
     match source_path.extension() {
         Some(x) if x.to_str() == Some("c") => (),
@@ -503,26 +547,35 @@ fn main() {
         }
     };
 
-    // println!("Compiling {} -> {}...",source_path.display(),output_path.display());
+    if verbose {
+        println!("Compiling {} -> {}...",source_path.display(),output_path.display());
+    }
 
     let source = fs::read_to_string(source_path)
         .expect("Failed reading source file");
 
-    // println!("Got source:");
-    // println!("{}",source);
+    if verbose {
+        println!("Got source:");
+        println!("{}",source);
+    }
 
     let tokens = tokenize(&source);
 
-    // println!("After tokenization:");
-    // let tokenstrs: Vec<String> = tokens.iter().map(|t| {
-    //     format!("{}",t)
-    // }).collect();
-    // println!("{}",tokenstrs.join(" "));
+    if verbose {
+        println!("After tokenization:");
+        let tokenstrs: Vec<String> = tokens.iter().map(|t| {
+            format!("{}",t)
+        }).collect();
+        println!("{}",tokenstrs.join(" "));
+    }
 
     let program = parse(&tokens);
 
-    // println!("After parsing:");
-    // println!("{:?}",program);
+    if verbose {
+        println!("After parsing:");
+        print_program(&program);
+    }
+
 
     let assembly_code = generate_program_code(program);
 
