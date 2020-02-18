@@ -39,7 +39,6 @@ BITSFLAG=""
 if [ $BITS == 32 ] ; then
     BITSFLAG="--32"
 fi
-echo ${CC} "${BITSFLAG}" -o $assembly_file $source_file
 ${CC} ${BITSFLAG} -o $assembly_file $source_file
 
 #echo "Assembling ${assembly_file} -> ${object_file}"
