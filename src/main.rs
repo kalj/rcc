@@ -100,10 +100,10 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::LogicalOr => r"^\|\|",
         Token::Equal => r"^==",
         Token::NotEqual => r"^!=",
-        Token::Less => r"^<",
-        Token::Greater => r"^>",
         Token::LessEqual => r"^<=",
         Token::GreaterEqual => r"^>=",
+        Token::Less => r"^<",
+        Token::Greater => r"^>",
         Token::Not => r"^!",
         Token::Complement => r"^~",
         Token::Keyword(kw) => match kw {
@@ -149,10 +149,10 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::LogicalOr,
         Token::Equal,
         Token::NotEqual,
-        Token::Less,
-        Token::Greater,
         Token::LessEqual,
         Token::GreaterEqual,
+        Token::Less,
+        Token::Greater,
         Token::Not,
         Token::Complement,
         Token::Keyword(Keyword::Int),
@@ -546,10 +546,6 @@ fn parse(tokens: &[Token]) -> Program {
 // Code generation
 //===================================================================
 
-struct Generator {
-    emit_32bit: bool,
-}
-
 struct Code {
     code: Vec<String>,
 }
@@ -559,8 +555,7 @@ impl Code {
         Code { code: Vec::new() }
     }
 
-    fn pushs(&mut self, mut line: String) {
-        line.push('\n');
+    fn pushs(&mut self, line: String) {
         self.code.push(line);
     }
 
@@ -579,10 +574,61 @@ impl Code {
     }
 }
 
+struct Generator {
+    emit_32bit: bool,
+    label_counter: i32,
+}
+
 impl Generator {
-    fn generate_expression_code(&self, expr: &Expression) -> Code {
+    fn new(emit_32bit: bool) -> Generator {
+        Generator {
+            emit_32bit: emit_32bit,
+            label_counter: 0,
+        }
+    }
+
+    fn generate_expression_code(&mut self, expr: &Expression) -> Code {
         let mut code = Code::new();
         match expr {
+            Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2) => {
+                // setup labels
+                let cond2 = format!("_label{}", self.label_counter);
+                let end = format!("_label{}", self.label_counter + 1);
+                self.label_counter += 2;
+
+                code = self.generate_expression_code(e1);
+                // if true then just jump over second part and set true
+                // else evaluate second part and set to return status of that
+                code.push("    cmp $0, %eax"); //                set ZF if EAX == 0
+                code.pushs(format!("    je {}", cond2)); //       if ZF is set, go to cond2
+                code.push("    mov $1, %eax"); //                else we are done, so set result to 1,
+                code.pushs(format!("    jmp {}", end)); //        and jump to end.
+                code.pushs(format!("{}:", cond2));
+                code.append(self.generate_expression_code(e2));
+                code.push("    cmp $0, %eax"); //                set ZF if EAX == 0
+                code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                code.push("    setnz %al"); //                   set bit to 1 if eax was not zero
+                code.pushs(format!("{}:", end));
+            }
+            Expression::BinaryOp(BinaryOp::LogicalAnd, e1, e2) => {
+                // setup labels
+                let cond2 = format!("_label{}", self.label_counter);
+                let end = format!("_label{}", self.label_counter + 1);
+                self.label_counter += 2;
+
+                code = self.generate_expression_code(e1);
+                // if false then just jump over second part and set false
+                // else evaluate second part and set to return status of that
+                code.push("    cmp $0, %eax"); //                set ZF if EAX == 0
+                code.pushs(format!("    jne {}", cond2)); //      if ZF is not, go to cond2
+                code.pushs(format!("    jmp {}", end)); //        else we are done (and eax is 0), so jump to end.
+                code.pushs(format!("{}:", cond2));
+                code.append(self.generate_expression_code(e2));
+                code.push("    cmp $0, %eax"); //                set ZF if EAX == 0
+                code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                code.push("    setnz %al"); //                   set bit to 1 if eax was not zero
+                code.pushs(format!("{}:", end));
+            }
             Expression::BinaryOp(bop, e1, e2) => {
                 code = self.generate_expression_code(e1);
                 if self.emit_32bit {
@@ -614,7 +660,6 @@ impl Generator {
                             code.push("    add    $16, %rsp"); // restore stack pointer
                         }
                     }
-
                     BinaryOp::Multiplication => {
                         if self.emit_32bit {
                             code.push("    imul   (%esp), %eax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
@@ -639,8 +684,44 @@ impl Generator {
                             code.push("    add    $16, %rsp"); // restore stack pointer
                         }
                     }
-                    _ => {
-                        panic!("Code generation not implemented for {:?}", bop);
+                    BinaryOp::Equal => {
+                        code.push("    pop %ecx"); //                    pop op1 from stack
+                        code.push("    cmp %ecx, %eax"); //              set ZF if EAX == ECX
+                        code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                        code.push("    sete %al"); //                    set bit to 1 if ecx (op1) was equal to eax (op2)
+                    }
+                    BinaryOp::NotEqual => {
+                        code.push("    pop %ecx"); //                    pop op1 from stack
+                        code.push("    cmp %ecx, %eax"); //              set ZF if EAX == ECX
+                        code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                        code.push("    setne %al"); //                   set bit to 1 if ecx (op1) was not equal to eax (op2)
+                    }
+                    BinaryOp::Less => {
+                        code.push("    pop %ecx"); //                    pop op1 from stack
+                        code.push("    cmp %eax, %ecx"); //              compare ECX and EAX
+                        code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                        code.push("    setl %al"); //                    set bit to 1 if ecx (op1) was less than eax (op2)
+                    }
+                    BinaryOp::Greater => {
+                        code.push("    pop %ecx"); //                    pop op1 from stack
+                        code.push("    cmp %eax, %ecx"); //              compare ECX and EAX
+                        code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                        code.push("    setg %al"); //                    set bit to 1 if ecx (op1) was greater than eax (op2)
+                    }
+                    BinaryOp::LessEqual => {
+                        code.push("    pop %ecx"); //                    pop op1 from stack
+                        code.push("    cmp %eax, %ecx"); //              compare ECX and EAX
+                        code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                        code.push("    setle %al"); //                   set bit to 1 if ecx (op1) was less than or equal to eax (op2)
+                    }
+                    BinaryOp::GreaterEqual => {
+                        code.push("    pop %ecx"); //                    pop op1 from stack
+                        code.push("    cmp %eax, %ecx"); //              compare ECX and EAX
+                        code.push("    mov $0, %eax"); //                zero out EAX without changing ZF
+                        code.push("    setge %al"); //                   set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
+                    }
+                    BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
+                        panic!("Internal Error"); // Handled above separately
                     }
                 }
             }
@@ -685,7 +766,7 @@ impl Generator {
         return code;
     }
 
-    fn generate_statement_code(&self, stmnt: Statement) -> Code {
+    fn generate_statement_code(&mut self, stmnt: Statement) -> Code {
         let mut code; // = Vec::new();
         match stmnt {
             Statement::Return(expr) => {
@@ -696,7 +777,7 @@ impl Generator {
         return code;
     }
 
-    fn generate_program_code(&self, prog: Program) -> Code {
+    fn generate_program_code(&mut self, prog: Program) -> Code {
         let mut code = Code::new();
         match prog {
             Program::Program(FunctionDeclaration::Function(name, body)) => {
@@ -781,10 +862,7 @@ fn main() {
         print_program(&program);
     }
 
-    let generator = Generator {
-        emit_32bit: emit_32bit,
-    };
-
+    let mut generator = Generator::new(emit_32bit);
     let assembly_code = generator.generate_program_code(program);
 
     fs::write(output_path, assembly_code.get_str()).expect("Failed writing assembly output");
