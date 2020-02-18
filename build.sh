@@ -6,21 +6,23 @@
 set -e
 
 BITS=32
-ARCH=i386
-DYNAMIC_LINKER="/lib/ld-linux.so.2"
 
 if [ $1 == -64 ] ; then
     BITS=64
-    ARCH=x86_64
-    DYNAMIC_LINKER="/lib64/ld-linux-x86-64.so.2"
     shift
-
 elif [ $1 == -32 ] ; then
     BITS=32
-    ARCH=i386
-    DYNAMIC_LINKER="/lib/ld-linux.so.2"
     shift
 fi
+
+if [ $BITS == 32 ] ; then
+    ARCH=i386
+    DYNAMIC_LINKER="/lib/ld-linux.so.2"
+elif [ $BITS == 64 ] ; then
+    ARCH=x86_64
+    DYNAMIC_LINKER="/lib64/ld-linux-x86-64.so.2"
+fi
+
 
 repo_root=$(dirname $0)
 
