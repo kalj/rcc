@@ -667,7 +667,7 @@ impl Generator {
             Expression::BinaryOp(bop, e1, e2) => {
                 code = self.generate_expression_code(e1);
 
-                code.push(CodeLine::i2("push",&self.rega));
+                code.push(CodeLine::i2("push", &self.rega));
                 code.append(self.generate_expression_code(e2));
                 match bop {
                     BinaryOp::Addition => {
@@ -681,15 +681,15 @@ impl Generator {
                     }
                     BinaryOp::Multiplication => {
                         code.push(CodeLine::i2("pop", &self.regc)); //             get arg1 from stack
-                        code.push(CodeLine::i3("imul", &self.regc, &self.rega)); // add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                        code.push(CodeLine::i3("imul", &self.regc, &self.rega));
+                        // add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
                     }
                     BinaryOp::Division => {
                         code.push(CodeLine::i3("mov", &self.rega, &self.regc)); //  copy arg2 into %ecx
                         code.push(CodeLine::i2("pop", &self.rega)); //              restore first operand into %eax
                         if self.emit_32bit {
                             code.push(CodeLine::i1("cdq")); //                      sign extend %eax into %edx:%eax
-                        }
-                        else {
+                        } else {
                             code.push(CodeLine::i1("cqo")); //                      sign extend %rax into %rdx:%rax
                         }
                         code.push(CodeLine::i2("idiv", &self.regc)); //             divide, numerator is in %eax, denominator is on stack, and result is in %eax.
@@ -752,7 +752,7 @@ impl Generator {
                 }
             }
             Expression::Constant(val) => {
-                let literal = format!("${}",val);
+                let literal = format!("${}", val);
                 code.push(CodeLine::i3("mov", &literal, &self.rega));
             }
         }
@@ -797,11 +797,13 @@ fn main() {
                 .value_name("OUTPUT")
                 .help("The output assembly file (INPUT with suffix .s by default)"),
         )
-        .arg(Arg::with_name("BITS")
-             .short("m")
-             .possible_values(&["64", "32"])
-             .default_value("64")
-             .help("Specify 32 or 64 bit code generation."))
+        .arg(
+            Arg::with_name("BITS")
+                .short("m")
+                .possible_values(&["64", "32"])
+                .default_value("64")
+                .help("Specify 32 or 64 bit code generation."),
+        )
         .arg(
             Arg::with_name("verbose")
                 .short("v")
