@@ -5,15 +5,21 @@
 
 set -e
 
-BITS=32
+BITS=64
 
-if [ $1 == -64 ] ; then
-    BITS=64
-    shift
-elif [ $1 == -32 ] ; then
-    BITS=32
-    shift
-fi
+while [ $# -gt 1 ] ; do
+
+    if [ $1 == -64 ] ; then
+        BITS=64
+        shift
+    elif [ $1 == -32 ] ; then
+        BITS=32
+        shift
+    elif [ $1 == "-v" ] ; then
+        shift
+        VERBOSE=1
+    fi
+done
 
 if [ $BITS == 32 ] ; then
     ARCH=i386
@@ -36,15 +42,11 @@ object_file=${prog_name}.o
 LIB_DIR="/usr/lib/${ARCH}-linux-gnu"
 LINK_FLAGS="-m elf_${ARCH} -dynamic-linker ${DYNAMIC_LINKER} ${LIB_DIR}/Scrt1.o ${LIB_DIR}/crti.o ${LIB_DIR}/crtn.o -lc"
 
-#echo "Compiling ${source_file} -> ${assembly_file}"
-BITSFLAG=""
-if [ $BITS == 32 ] ; then
-    BITSFLAG="--32"
-fi
-${CC} ${BITSFLAG} -o $assembly_file $source_file
+if [[ $VERBOSE ]] ; then echo "Compiling ${source_file} -> ${assembly_file}" ; fi
+${CC} ${VERBOSE:+-v} "-m${BITS}" -o $assembly_file $source_file
 
-#echo "Assembling ${assembly_file} -> ${object_file}"
+if [[ $VERBOSE ]] ; then echo "Assembling ${assembly_file} -> ${object_file}" ; fi
 as --${BITS} -o $object_file $assembly_file
 
-#echo "Linking ${object_file} -> ${prog_name}"
+if [[ $VERBOSE ]] ; then echo "Linking ${object_file} -> ${prog_name}" ; fi
 ld ${LINK_FLAGS} -o $prog_name $object_file
