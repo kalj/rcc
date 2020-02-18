@@ -9,6 +9,10 @@ use std::fs;
 use std::iter::Peekable;
 use std::path::{Path, PathBuf};
 
+//===================================================================
+// Tokenizing
+//===================================================================
+
 #[derive(Debug, Copy, Clone)]
 enum Keyword {
     Int,
@@ -26,6 +30,14 @@ enum Token {
     Division,
     Plus,
     Minus,
+    LogicalAnd,
+    LogicalOr,
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
     Not,
     Complement,
     Keyword(Keyword),
@@ -33,51 +45,44 @@ enum Token {
     IntLiteral(i64),
 }
 
+fn token_to_str(tok: &Token) -> String {
+    match tok {
+        Token::Lparen => "(".to_string(),
+        Token::Rparen => ")".to_string(),
+        Token::Lbrace => "{".to_string(),
+        Token::Rbrace => "}".to_string(),
+        Token::Semicolon => ";".to_string(),
+        Token::Multiplication => "*".to_string(),
+        Token::Division => "/".to_string(),
+        Token::Plus => "+".to_string(),
+        Token::Minus => "-".to_string(),
+        Token::LogicalAnd => "&&".to_string(),
+        Token::LogicalOr => "||".to_string(),
+        Token::Equal => "==".to_string(),
+        Token::NotEqual => "!=".to_string(),
+        Token::Less => "<".to_string(),
+        Token::Greater => ">".to_string(),
+        Token::LessEqual => "<=".to_string(),
+        Token::GreaterEqual => ">=".to_string(),
+        Token::Not => "!".to_string(),
+        Token::Complement => "~".to_string(),
+        Token::Keyword(kw) => match kw {
+            Keyword::Int => "int".to_string(),
+            Keyword::Return => "return".to_string(),
+        },
+        Token::Identifier(ident) => ident.to_string(),
+        Token::IntLiteral(val) => val.to_string(),
+    }
+}
+
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let s = match self {
-            Token::Lparen => "(".to_string(),
-            Token::Rparen => ")".to_string(),
-            Token::Lbrace => "{".to_string(),
-            Token::Rbrace => "}".to_string(),
-            Token::Semicolon => ";".to_string(),
-            Token::Multiplication => "*".to_string(),
-            Token::Division => "/".to_string(),
-            Token::Plus => "+".to_string(),
-            Token::Minus => "-".to_string(),
-            Token::Not => "!".to_string(),
-            Token::Complement => "~".to_string(),
-            Token::Keyword(kw) => match kw {
-                Keyword::Int => "int".to_string(),
-                Keyword::Return => "return".to_string(),
-            },
-            Token::Identifier(ident) => ident.to_string(),
-            Token::IntLiteral(val) => val.to_string(),
-        };
-        write!(f, "{}", s)
+        write!(f, "{}", token_to_str(self))
     }
 }
 
 fn token_length(tok: &Token) -> usize {
-    match tok {
-        Token::Lparen
-        | Token::Rparen
-        | Token::Lbrace
-        | Token::Rbrace
-        | Token::Multiplication
-        | Token::Division
-        | Token::Plus
-        | Token::Minus
-        | Token::Not
-        | Token::Complement
-        | Token::Semicolon => 1,
-        Token::Keyword(kw) => match kw {
-            Keyword::Int => 3,
-            Keyword::Return => 6,
-        },
-        Token::Identifier(ident) => ident.len(),
-        Token::IntLiteral(val) => val.to_string().len(),
-    }
+    token_to_str(tok).len()
 }
 
 fn get_token_pattern(tok: &Token) -> &str {
@@ -91,6 +96,14 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::Division => r"^/",
         Token::Plus => r"^\+",
         Token::Minus => r"^-",
+        Token::LogicalAnd => r"^&&",
+        Token::LogicalOr => r"^\|\|",
+        Token::Equal => r"^==",
+        Token::NotEqual => r"^!=",
+        Token::Less => r"^<",
+        Token::Greater => r"^>",
+        Token::LessEqual => r"^<=",
+        Token::GreaterEqual => r"^>=",
         Token::Not => r"^!",
         Token::Complement => r"^~",
         Token::Keyword(kw) => match kw {
@@ -132,6 +145,14 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Division,
         Token::Plus,
         Token::Minus,
+        Token::LogicalAnd,
+        Token::LogicalOr,
+        Token::Equal,
+        Token::NotEqual,
+        Token::Less,
+        Token::Greater,
+        Token::LessEqual,
+        Token::GreaterEqual,
         Token::Not,
         Token::Complement,
         Token::Keyword(Keyword::Int),
@@ -141,7 +162,10 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     ];
 
     for t in toktypes.iter() {
-        let re = Regex::new(get_token_pattern(t)).unwrap();
+        let re = Regex::new(get_token_pattern(t)).expect(&format!(
+            "Failed building regex object for token type {:?}",
+            t
+        ));
         if let Some(captures) = re.captures(&source[cursor..]) {
             return match t {
                 Token::Identifier(_) => {
@@ -155,18 +179,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
                     Ok(Token::IntLiteral(value))
                 }
                 Token::Keyword(kw) => Ok(Token::Keyword(*kw)),
-                Token::Lparen
-                | Token::Rparen
-                | Token::Lbrace
-                | Token::Rbrace
-                | Token::Semicolon
-                | Token::Multiplication
-                | Token::Division
-                | Token::Plus
-                | Token::Minus
-                | Token::Not
-                | Token::Complement => Ok(t.clone()),
-                // _ => Ok(t)
+                _ => Ok(t.clone()),
             };
         }
     }
@@ -201,6 +214,14 @@ enum BinaryOp {
     Subtraction,
     Multiplication,
     Division,
+    LogicalAnd,
+    LogicalOr,
+    Equal,
+    NotEqual,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
 }
 
 #[derive(Debug)]
@@ -269,6 +290,10 @@ fn print_program(prog: &Program) {
     println!("}}");
 }
 
+//===================================================================
+// Parsing
+//===================================================================
+
 fn parse_factor(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
     let mut tok = tokiter.next().unwrap();
     match tok {
@@ -300,46 +325,125 @@ fn parse_factor(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
 fn parse_term(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
     let mut factor = parse_factor(tokiter);
     while let Some(tok) = tokiter.peek() {
-        match tok {
-            Token::Multiplication | Token::Division => {
-                let op = if let Token::Multiplication = tok {
-                    BinaryOp::Multiplication
-                } else {
-                    BinaryOp::Division
-                };
-                tokiter.next(); // consume
-                let next_factor = parse_factor(tokiter);
-                factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
-            }
-            _ => {
-                break;
-            }
+        let optop = match tok {
+            Token::Multiplication => Some(BinaryOp::Multiplication),
+            Token::Division => Some(BinaryOp::Division),
+            _ => None,
+        };
+        if let Some(op) = optop {
+            tokiter.next(); // consume
+            let next_factor = parse_factor(tokiter);
+            factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
+        } else {
+            break;
         }
     }
-
     return factor;
 }
 
-fn parse_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+fn parse_additive_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
     let mut term = parse_term(tokiter);
     while let Some(tok) = tokiter.peek() {
+        let optop = match tok {
+            Token::Minus => Some(BinaryOp::Subtraction),
+            Token::Plus => Some(BinaryOp::Addition),
+            _ => None,
+        };
+        if let Some(op) = optop {
+            tokiter.next(); // consume
+            let next_term = parse_term(tokiter);
+            term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
+        } else {
+            break;
+        }
+    }
+    return term;
+}
+
+fn parse_relational_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut adexpr = parse_additive_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        let optop = match tok {
+            Token::Greater => Some(BinaryOp::Greater),
+            Token::Less => Some(BinaryOp::Less),
+            Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
+            Token::LessEqual => Some(BinaryOp::LessEqual),
+            _ => None,
+        };
+        if let Some(op) = optop {
+            tokiter.next(); // consume
+            let next_adexpr = parse_additive_expression(tokiter);
+            adexpr = Expression::BinaryOp(op, Box::new(adexpr), Box::new(next_adexpr));
+        } else {
+            break;
+        }
+    }
+    return adexpr;
+}
+
+fn parse_equality_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut relexpr = parse_relational_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        let optop = match tok {
+            Token::Equal => Some(BinaryOp::Equal),
+            Token::NotEqual => Some(BinaryOp::NotEqual),
+            _ => None,
+        };
+        if let Some(op) = optop {
+            tokiter.next(); // consume
+            let next_relexpr = parse_relational_expression(tokiter);
+            relexpr = Expression::BinaryOp(op, Box::new(relexpr), Box::new(next_relexpr));
+        } else {
+            break;
+        }
+    }
+    return relexpr;
+}
+
+fn parse_logical_and_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut eqexpr = parse_equality_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
         match tok {
-            Token::Minus | Token::Plus => {
-                let op = if let Token::Minus = tok {
-                    BinaryOp::Subtraction
-                } else {
-                    BinaryOp::Addition
-                };
+            Token::LogicalAnd => {
                 tokiter.next(); // consume
-                let next_term = parse_term(tokiter);
-                term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
+                let next_eqexpr = parse_equality_expression(tokiter);
+                eqexpr = Expression::BinaryOp(
+                    BinaryOp::LogicalAnd,
+                    Box::new(eqexpr),
+                    Box::new(next_eqexpr),
+                );
             }
             _ => {
                 break;
             }
         }
     }
-    return term;
+    return eqexpr;
+}
+
+fn parse_logical_or_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut laexpr = parse_logical_and_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        match tok {
+            Token::LogicalOr => {
+                tokiter.next(); // consume
+                let next_laexpr = parse_logical_and_expression(tokiter);
+                laexpr = Expression::BinaryOp(
+                    BinaryOp::LogicalOr,
+                    Box::new(laexpr),
+                    Box::new(next_laexpr),
+                );
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+    return laexpr;
+}
+
+fn parse_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    parse_logical_or_expression(tokiter)
 }
 
 fn parse_statement(tokiter: &mut Peekable<Iter<Token>>) -> Statement {
@@ -438,6 +542,10 @@ fn parse(tokens: &[Token]) -> Program {
     return parse_program(&mut tokiter);
 }
 
+//===================================================================
+// Code generation
+//===================================================================
+
 struct Generator {
     emit_32bit: bool,
 }
@@ -475,7 +583,7 @@ impl Generator {
     fn generate_expression_code(&self, expr: &Expression) -> Code {
         let mut code = Code::new();
         match expr {
-            Expression::BinaryOp(BinaryOp::Addition, e1, e2) => {
+            Expression::BinaryOp(bop, e1, e2) => {
                 code = self.generate_expression_code(e1);
                 if self.emit_32bit {
                     code.push("    push   %eax");
@@ -483,98 +591,87 @@ impl Generator {
                     code.push("    push   %rax");
                 }
                 code.append(self.generate_expression_code(e2));
-                if self.emit_32bit {
-                    code.push("    add    (%esp), %eax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
-                    code.push("    add    $4, %esp"); // restore stack pointer
-                } else {
-                    code.push("    add    (%rsp), %rax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
-                    code.push("    add    $8, %rsp"); // restore stack pointer
+                match bop {
+                    BinaryOp::Addition => {
+                        if self.emit_32bit {
+                            code.push("    add    (%esp), %eax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                            code.push("    add    $4, %esp"); // restore stack pointer
+                        } else {
+                            code.push("    add    (%rsp), %rax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                            code.push("    add    $8, %rsp"); // restore stack pointer
+                        }
+                    }
+                    BinaryOp::Subtraction => {
+                        if self.emit_32bit {
+                            code.push("    push   %eax"); // push second operand on stack
+                            code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
+                            code.push("    sub    (%esp), %eax"); // subtract, %eax-(%esp)->%eax
+                            code.push("    add    $8, %esp"); // restore stack pointer
+                        } else {
+                            code.push("    push   %rax"); // push second operand on stack
+                            code.push("    mov    8(%rsp), %rax"); // restore first operand into %eax
+                            code.push("    sub    (%rsp), %rax"); // subtract, %eax-(%esp)->%eax
+                            code.push("    add    $16, %rsp"); // restore stack pointer
+                        }
+                    }
+
+                    BinaryOp::Multiplication => {
+                        if self.emit_32bit {
+                            code.push("    imul   (%esp), %eax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                            code.push("    add    $4, %esp"); // restore stack pointer
+                        } else {
+                            code.push("    imul   (%rsp), %rax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                            code.push("    add    $8, %rsp"); // restore stack pointer
+                        }
+                    }
+                    BinaryOp::Division => {
+                        if self.emit_32bit {
+                            code.push("    push   %eax"); // push second operand on stack
+                            code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
+                            code.push("    cdq");
+                            code.push("    idivl  (%esp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
+                            code.push("    add    $8, %esp"); // restore stack pointer
+                        } else {
+                            code.push("    push   %rax"); // push second operand on stack
+                            code.push("    mov    8(%rsp), %rax"); // restore first operand into %eax
+                            code.push("    cdq");
+                            code.push("    idivl  (%rsp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
+                            code.push("    add    $16, %rsp"); // restore stack pointer
+                        }
+                    }
+                    _ => {
+                        panic!("Code generation not implemented for {:?}", bop);
+                    }
                 }
             }
-            Expression::BinaryOp(BinaryOp::Subtraction, e1, e2) => {
-                code = self.generate_expression_code(e1);
-                if self.emit_32bit {
-                    code.push("    push   %eax");
-                } else {
-                    code.push("    push   %rax");
-                }
-                code.append(self.generate_expression_code(e2));
-                if self.emit_32bit {
-                    code.push("    push   %eax"); // push second operand on stack
-                    code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
-                    code.push("    sub    (%esp), %eax"); // subtract, %eax-(%esp)->%eax
-                    code.push("    add    $8, %esp"); // restore stack pointer
-                } else {
-                    code.push("    push   %rax"); // push second operand on stack
-                    code.push("    mov    8(%rsp), %rax"); // restore first operand into %eax
-                    code.push("    sub    (%rsp), %rax"); // subtract, %eax-(%esp)->%eax
-                    code.push("    add    $16, %rsp"); // restore stack pointer
-                }
-            }
-            Expression::BinaryOp(BinaryOp::Multiplication, e1, e2) => {
-                code = self.generate_expression_code(e1);
-                if self.emit_32bit {
-                    code.push("    push   %eax");
-                } else {
-                    code.push("    push   %rax");
-                }
-                code.append(self.generate_expression_code(e2));
-                if self.emit_32bit {
-                    code.push("    imul   (%esp), %eax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
-                    code.push("    add    $4, %esp"); // restore stack pointer
-                } else {
-                    code.push("    imul   (%rsp), %rax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
-                    code.push("    add    $8, %rsp"); // restore stack pointer
-                }
-            }
-            Expression::BinaryOp(BinaryOp::Division, e1, e2) => {
-                code = self.generate_expression_code(e1);
-                if self.emit_32bit {
-                    code.push("    push   %eax");
-                } else {
-                    code.push("    push   %rax");
-                }
-                code.append(self.generate_expression_code(e2));
-                if self.emit_32bit {
-                    code.push("    push   %eax"); // push second operand on stack
-                    code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
-                    code.push("    cdq");
-                    code.push("    idivl  (%esp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
-                    code.push("    add    $8, %esp"); // restore stack pointer
-                } else {
-                    code.push("    push   %rax"); // push second operand on stack
-                    code.push("    mov    8(%rsp), %rax"); // restore first operand into %eax
-                    code.push("    cdq");
-                    code.push("    idivl  (%rsp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
-                    code.push("    add    $16, %rsp"); // restore stack pointer
-                }
-            }
-            Expression::UnaryOp(UnaryOp::Negate, expr) => {
+            Expression::UnaryOp(uop, expr) => {
                 code = self.generate_expression_code(expr);
-                if self.emit_32bit {
-                    code.push("    neg    %eax");
-                } else {
-                    code.push("    neg    %rax");
-                }
-            }
-            Expression::UnaryOp(UnaryOp::Not, expr) => {
-                code = self.generate_expression_code(expr);
-                if self.emit_32bit {
-                    code.push("    cmpl   $0, %eax");
-                    code.push("    movl   $0, %eax");
-                    code.push("    sete   %al");
-                } else {
-                    code.push("    cmp    $0, %rax");
-                    code.push("    mov    $0, %rax");
-                    code.push("    sete   %al");
-                }
-            }
-            Expression::UnaryOp(UnaryOp::Complement, expr) => {
-                code = self.generate_expression_code(expr);
-                if self.emit_32bit {
-                    code.push("    not    %eax");
-                } else {
-                    code.push("    not    %rax");
+                match uop {
+                    UnaryOp::Negate => {
+                        if self.emit_32bit {
+                            code.push("    neg    %eax");
+                        } else {
+                            code.push("    neg    %rax");
+                        }
+                    }
+                    UnaryOp::Not => {
+                        if self.emit_32bit {
+                            code.push("    cmpl   $0, %eax");
+                            code.push("    movl   $0, %eax");
+                            code.push("    sete   %al");
+                        } else {
+                            code.push("    cmp    $0, %rax");
+                            code.push("    mov    $0, %rax");
+                            code.push("    sete   %al");
+                        }
+                    }
+                    UnaryOp::Complement => {
+                        if self.emit_32bit {
+                            code.push("    not    %eax");
+                        } else {
+                            code.push("    not    %rax");
+                        }
+                    }
                 }
             }
             Expression::Constant(val) => {
