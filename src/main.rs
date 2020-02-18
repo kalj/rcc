@@ -438,6 +438,10 @@ fn parse(tokens: &[Token]) -> Program {
     return parse_program(&mut tokiter);
 }
 
+struct Generator {
+    emit_32bit: bool,
+}
+
 struct Code {
     code: Vec<String>,
 }
@@ -467,84 +471,145 @@ impl Code {
     }
 }
 
-fn generate_expression_code(expr: &Expression) -> Code {
-    let mut code = Code::new();
-    match expr {
-        Expression::BinaryOp(BinaryOp::Addition, e1, e2) => {
-            code = generate_expression_code(e1);
-            code.push("    push   %eax");
-            code.append(generate_expression_code(e2));
-            code.push("    add    (%esp), %eax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
-            code.push("    add    $4, %esp"); // restore stack pointer
+impl Generator {
+    fn generate_expression_code(&self, expr: &Expression) -> Code {
+        let mut code = Code::new();
+        match expr {
+            Expression::BinaryOp(BinaryOp::Addition, e1, e2) => {
+                code = self.generate_expression_code(e1);
+                if self.emit_32bit {
+                    code.push("    push   %eax");
+                } else {
+                    code.push("    push   %rax");
+                }
+                code.append(self.generate_expression_code(e2));
+                if self.emit_32bit {
+                    code.push("    add    (%esp), %eax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                    code.push("    add    $4, %esp"); // restore stack pointer
+                } else {
+                    code.push("    add    (%rsp), %rax"); // add, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                    code.push("    add    $8, %rsp"); // restore stack pointer
+                }
+            }
+            Expression::BinaryOp(BinaryOp::Subtraction, e1, e2) => {
+                code = self.generate_expression_code(e1);
+                if self.emit_32bit {
+                    code.push("    push   %eax");
+                } else {
+                    code.push("    push   %rax");
+                }
+                code.append(self.generate_expression_code(e2));
+                if self.emit_32bit {
+                    code.push("    push   %eax"); // push second operand on stack
+                    code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
+                    code.push("    sub    (%esp), %eax"); // subtract, %eax-(%esp)->%eax
+                    code.push("    add    $8, %esp"); // restore stack pointer
+                } else {
+                    code.push("    push   %rax"); // push second operand on stack
+                    code.push("    mov    8(%rsp), %rax"); // restore first operand into %eax
+                    code.push("    sub    (%rsp), %rax"); // subtract, %eax-(%esp)->%eax
+                    code.push("    add    $16, %rsp"); // restore stack pointer
+                }
+            }
+            Expression::BinaryOp(BinaryOp::Multiplication, e1, e2) => {
+                code = self.generate_expression_code(e1);
+                if self.emit_32bit {
+                    code.push("    push   %eax");
+                } else {
+                    code.push("    push   %rax");
+                }
+                code.append(self.generate_expression_code(e2));
+                if self.emit_32bit {
+                    code.push("    imul   (%esp), %eax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                    code.push("    add    $4, %esp"); // restore stack pointer
+                } else {
+                    code.push("    imul   (%rsp), %rax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
+                    code.push("    add    $8, %rsp"); // restore stack pointer
+                }
+            }
+            Expression::BinaryOp(BinaryOp::Division, e1, e2) => {
+                code = self.generate_expression_code(e1);
+                if self.emit_32bit {
+                    code.push("    push   %eax");
+                } else {
+                    code.push("    push   %rax");
+                }
+                code.append(self.generate_expression_code(e2));
+                if self.emit_32bit {
+                    code.push("    push   %eax"); // push second operand on stack
+                    code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
+                    code.push("    cdq");
+                    code.push("    idivl  (%esp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
+                    code.push("    add    $8, %esp"); // restore stack pointer
+                } else {
+                    code.push("    push   %rax"); // push second operand on stack
+                    code.push("    mov    8(%rsp), %rax"); // restore first operand into %eax
+                    code.push("    cdq");
+                    code.push("    idivl  (%rsp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
+                    code.push("    add    $16, %rsp"); // restore stack pointer
+                }
+            }
+            Expression::UnaryOp(UnaryOp::Negate, expr) => {
+                code = self.generate_expression_code(expr);
+                if self.emit_32bit {
+                    code.push("    neg    %eax");
+                } else {
+                    code.push("    neg    %rax");
+                }
+            }
+            Expression::UnaryOp(UnaryOp::Not, expr) => {
+                code = self.generate_expression_code(expr);
+                if self.emit_32bit {
+                    code.push("    cmpl   $0, %eax");
+                    code.push("    movl   $0, %eax");
+                    code.push("    sete   %al");
+                } else {
+                    code.push("    cmp    $0, %rax");
+                    code.push("    mov    $0, %rax");
+                    code.push("    sete   %al");
+                }
+            }
+            Expression::UnaryOp(UnaryOp::Complement, expr) => {
+                code = self.generate_expression_code(expr);
+                if self.emit_32bit {
+                    code.push("    not    %eax");
+                } else {
+                    code.push("    not    %rax");
+                }
+            }
+            Expression::Constant(val) => {
+                if self.emit_32bit {
+                    code.pushs(format!("    mov    ${}, %eax", val));
+                } else {
+                    code.pushs(format!("    mov    ${}, %rax", val));
+                }
+            }
         }
-        Expression::BinaryOp(BinaryOp::Subtraction, e1, e2) => {
-            code = generate_expression_code(e1);
-            code.push("    push   %eax");
-            code.append(generate_expression_code(e2));
-            code.push("    push   %eax"); // push second operand on stack
-            code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
-            code.push("    sub    (%esp), %eax"); // subtract, %eax-(%esp)->%eax
-            code.push("    add    $8, %esp"); // restore stack pointer
-        }
-        Expression::BinaryOp(BinaryOp::Multiplication, e1, e2) => {
-            code = generate_expression_code(e1);
-            code.push("    push   %eax");
-            code.append(generate_expression_code(e2));
-            code.push("    imul   (%esp), %eax"); // multiply, arg1 is on stack, arg2 is in %eax, and result is in %eax
-            code.push("    add    $4, %esp"); // restore stack pointer
-        }
-        Expression::BinaryOp(BinaryOp::Division, e1, e2) => {
-            code = generate_expression_code(e1);
-            code.push("    push   %eax");
-            code.append(generate_expression_code(e2));
-            code.push("    push   %eax"); // push second operand on stack
-            code.push("    mov    4(%esp), %eax"); // restore first operand into %eax
-            code.push("    cdq");
-            code.push("    idivl  (%esp)"); // divide, numerator is in %eax, denominator is on stack, and result is in %eax.
-            code.push("    add    $8, %esp"); // restore stack pointer
-        }
-        Expression::UnaryOp(UnaryOp::Negate, expr) => {
-            code = generate_expression_code(expr);
-            code.push("    neg    %eax");
-        }
-        Expression::UnaryOp(UnaryOp::Not, expr) => {
-            code = generate_expression_code(expr);
-            code.push("    cmpl   $0, %eax");
-            code.push("    movl   $0, %eax");
-            code.push("    sete   %al");
-        }
-        Expression::UnaryOp(UnaryOp::Complement, expr) => {
-            code = generate_expression_code(expr);
-            code.push("    not    %eax");
-        }
-        Expression::Constant(val) => {
-            code.pushs(format!("    mov    ${}, %eax", val));
-        }
+        return code;
     }
-    return code;
-}
 
-fn generate_statement_code(stmnt: Statement) -> Code {
-    let mut code; // = Vec::new();
-    match stmnt {
-        Statement::Return(expr) => {
-            code = generate_expression_code(&expr);
-            code.push("    ret");
+    fn generate_statement_code(&self, stmnt: Statement) -> Code {
+        let mut code; // = Vec::new();
+        match stmnt {
+            Statement::Return(expr) => {
+                code = self.generate_expression_code(&expr);
+                code.push("    ret");
+            }
         }
+        return code;
     }
-    return code;
-}
 
-fn generate_program_code(prog: Program) -> Code {
-    let mut code = Code::new();
-    match prog {
-        Program::Program(FunctionDeclaration::Function(name, body)) => {
-            code.pushs(format!("    .globl {}", name));
-            code.pushs(format!("{}:", name));
-            code.append(generate_statement_code(body));
+    fn generate_program_code(&self, prog: Program) -> Code {
+        let mut code = Code::new();
+        match prog {
+            Program::Program(FunctionDeclaration::Function(name, body)) => {
+                code.pushs(format!("    .globl {}", name));
+                code.pushs(format!("{}:", name));
+                code.append(self.generate_statement_code(body));
+            }
         }
+        return code;
     }
-    return code;
 }
 
 fn main() {
@@ -561,6 +626,7 @@ fn main() {
                 .value_name("OUTPUT")
                 .help("The output assembly file (INPUT with suffix .s by default)"),
         )
+        .arg(Arg::with_name("32").long("32").help("Generate 32-bit code"))
         .arg(
             Arg::with_name("verbose")
                 .short("v")
@@ -572,6 +638,7 @@ fn main() {
     let source_filename = matches.value_of("INPUT").unwrap();
     let source_path = Path::new(source_filename);
 
+    let emit_32bit = matches.is_present("32");
     let verbose = matches.is_present("verbose");
 
     match source_path.extension() {
@@ -617,7 +684,11 @@ fn main() {
         print_program(&program);
     }
 
-    let assembly_code = generate_program_code(program);
+    let generator = Generator {
+        emit_32bit: emit_32bit,
+    };
+
+    let assembly_code = generator.generate_program_code(program);
 
     fs::write(output_path, assembly_code.get_str()).expect("Failed writing assembly output");
 }
