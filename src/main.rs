@@ -28,6 +28,7 @@ enum Token {
     Rbrace,
     Multiplication,
     Division,
+    Remainder,
     Plus,
     Minus,
     LogicalAnd,
@@ -54,6 +55,7 @@ fn token_to_str(tok: &Token) -> String {
         Token::Semicolon => ";".to_string(),
         Token::Multiplication => "*".to_string(),
         Token::Division => "/".to_string(),
+        Token::Remainder => "%".to_string(),
         Token::Plus => "+".to_string(),
         Token::Minus => "-".to_string(),
         Token::LogicalAnd => "&&".to_string(),
@@ -94,6 +96,7 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::Semicolon => r"^;",
         Token::Multiplication => r"^\*",
         Token::Division => r"^/",
+        Token::Remainder => r"^%",
         Token::Plus => r"^\+",
         Token::Minus => r"^-",
         Token::LogicalAnd => r"^&&",
@@ -143,6 +146,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Rbrace,
         Token::Multiplication,
         Token::Division,
+        Token::Remainder,
         Token::Plus,
         Token::Minus,
         Token::LogicalAnd,
@@ -214,6 +218,7 @@ enum BinaryOp {
     Subtraction,
     Multiplication,
     Division,
+    Remainder,
     LogicalAnd,
     LogicalOr,
     Equal,
@@ -328,6 +333,7 @@ fn parse_term(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
         let optop = match tok {
             Token::Multiplication => Some(BinaryOp::Multiplication),
             Token::Division => Some(BinaryOp::Division),
+            Token::Remainder => Some(BinaryOp::Remainder),
             _ => None,
         };
         if let Some(op) = optop {
@@ -612,6 +618,7 @@ struct Generator {
     regc: String,
     rega32: String,
     regc32: String,
+    regd32: String,
 }
 
 impl Generator {
@@ -623,6 +630,7 @@ impl Generator {
             regc: (if emit_32bit { "%ecx" } else { "%rcx" }).to_string(),
             rega32: "%eax".to_string(),
             regc32: "%ecx".to_string(),
+            regd32: "%edx".to_string(),
         }
     }
 
@@ -693,6 +701,13 @@ impl Generator {
                         code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
                         code.push(CodeLine::i1("cltd")); //                              sign extend %eax into %edx:%eax
                         code.push(CodeLine::i2("idiv", &self.regc32)); //                idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                    }
+                    BinaryOp::Remainder => {
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
+                        code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
+                        code.push(CodeLine::i1("cltd")); //                              sign extend %eax into %edx:%eax
+                        code.push(CodeLine::i2("idiv", &self.regc32)); //                idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                        code.push(CodeLine::i3("mov", &self.regd32, &self.rega32)); //   copy result into %eax
                     }
                     BinaryOp::Equal => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
