@@ -39,6 +39,9 @@ enum Token {
     Greater,
     LessEqual,
     GreaterEqual,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
     Not,
     Complement,
     Keyword(Keyword),
@@ -66,6 +69,9 @@ fn token_to_str(tok: &Token) -> String {
         Token::Greater => ">".to_string(),
         Token::LessEqual => "<=".to_string(),
         Token::GreaterEqual => ">=".to_string(),
+        Token::BitwiseAnd => "&".to_string(),
+        Token::BitwiseOr => "|".to_string(),
+        Token::BitwiseXor => "^".to_string(),
         Token::Not => "!".to_string(),
         Token::Complement => "~".to_string(),
         Token::Keyword(kw) => match kw {
@@ -107,6 +113,9 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::GreaterEqual => r"^>=",
         Token::Less => r"^<",
         Token::Greater => r"^>",
+        Token::BitwiseAnd => r"^&",
+        Token::BitwiseOr => r"^\|",
+        Token::BitwiseXor => r"^\^",
         Token::Not => r"^!",
         Token::Complement => r"^~",
         Token::Keyword(kw) => match kw {
@@ -151,6 +160,9 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Minus,
         Token::LogicalAnd,
         Token::LogicalOr,
+        Token::BitwiseAnd,
+        Token::BitwiseOr,
+        Token::BitwiseXor,
         Token::Equal,
         Token::NotEqual,
         Token::LessEqual,
@@ -227,6 +239,9 @@ enum BinaryOp {
     Greater,
     LessEqual,
     GreaterEqual,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
 }
 
 #[derive(Debug)]
@@ -406,15 +421,15 @@ fn parse_equality_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression 
     return relexpr;
 }
 
-fn parse_logical_and_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+fn parse_bitwise_and_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
     let mut eqexpr = parse_equality_expression(tokiter);
     while let Some(tok) = tokiter.peek() {
         match tok {
-            Token::LogicalAnd => {
+            Token::BitwiseAnd => {
                 tokiter.next(); // consume
                 let next_eqexpr = parse_equality_expression(tokiter);
                 eqexpr = Expression::BinaryOp(
-                    BinaryOp::LogicalAnd,
+                    BinaryOp::BitwiseAnd,
                     Box::new(eqexpr),
                     Box::new(next_eqexpr),
                 );
@@ -425,6 +440,69 @@ fn parse_logical_and_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expressi
         }
     }
     return eqexpr;
+}
+
+fn parse_bitwise_xor_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut bandexpr = parse_bitwise_and_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        match tok {
+            Token::BitwiseXor => {
+                tokiter.next(); // consume
+                let next_bandexpr = parse_bitwise_and_expression(tokiter);
+                bandexpr = Expression::BinaryOp(
+                    BinaryOp::BitwiseXor,
+                    Box::new(bandexpr),
+                    Box::new(next_bandexpr),
+                );
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+    return bandexpr;
+}
+
+fn parse_bitwise_or_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut bxorexpr = parse_bitwise_xor_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        match tok {
+            Token::BitwiseOr => {
+                tokiter.next(); // consume
+                let next_bxorexpr = parse_bitwise_xor_expression(tokiter);
+                bxorexpr = Expression::BinaryOp(
+                    BinaryOp::BitwiseOr,
+                    Box::new(bxorexpr),
+                    Box::new(next_bxorexpr),
+                );
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+    return bxorexpr;
+}
+
+fn parse_logical_and_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut borexpr = parse_bitwise_or_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        match tok {
+            Token::LogicalAnd => {
+                tokiter.next(); // consume
+                let next_borexpr = parse_bitwise_or_expression(tokiter);
+                borexpr = Expression::BinaryOp(
+                    BinaryOp::LogicalAnd,
+                    Box::new(borexpr),
+                    Box::new(next_borexpr),
+                );
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+    return borexpr;
 }
 
 fn parse_logical_or_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
@@ -744,6 +822,18 @@ impl Generator {
                         code.push(CodeLine::i3("cmp", &self.rega32, &self.regc32)); //    compare ECX and EAX
                         code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("setge", "%al")); //                       set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
+                    }
+                    BinaryOp::BitwiseOr => {
+                        code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
+                        code.push(CodeLine::i3("or", &self.regc32, &self.rega32)); //    and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                    }
+                    BinaryOp::BitwiseXor => {
+                        code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
+                        code.push(CodeLine::i3("xor", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                    }
+                    BinaryOp::BitwiseAnd => {
+                        code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
+                        code.push(CodeLine::i3("and", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
                     }
                     BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                         panic!("Internal Error"); // Handled above separately
