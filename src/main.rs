@@ -610,6 +610,8 @@ struct Generator {
     label_counter: i32,
     rega: String,
     regc: String,
+    rega32: String,
+    regc32: String,
 }
 
 impl Generator {
@@ -619,6 +621,8 @@ impl Generator {
             label_counter: 0,
             rega: (if emit_32bit { "%eax" } else { "%rax" }).to_string(),
             regc: (if emit_32bit { "%ecx" } else { "%rcx" }).to_string(),
+            rega32: "%eax".to_string(),
+            regc32: "%ecx".to_string(),
         }
     }
 
@@ -634,15 +638,15 @@ impl Generator {
                 code = self.generate_expression_code(e1);
                 // if true then just jump over second part and set true
                 // else evaluate second part and set to return status of that
-                code.push(CodeLine::i3("cmp", "$0", &self.rega)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("je", &cond2)); //                          if ZF is set, go to cond2
-                code.push(CodeLine::i3("mov", "$1", &self.rega)); //               else we are done, so set result to 1,
-                code.push(CodeLine::i2("jmp", &end)); //                           and jump to end.
+                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                code.push(CodeLine::i2("je", &cond2)); //                            if ZF is set, go to cond2
+                code.push(CodeLine::i3("mov", "$1", &self.rega32)); //               else we are done, so set result to 1,
+                code.push(CodeLine::i2("jmp", &end)); //                             and jump to end.
                 code.push(CodeLine::lbl(&cond2));
                 code.append(self.generate_expression_code(e2));
-                code.push(CodeLine::i3("cmp", "$0", &self.rega)); //               set ZF if EAX == 0
-                code.push(CodeLine::i3("mov", "$0", &self.rega)); //               zero out EAX without changing ZF
-                code.push(CodeLine::i2("setnz", "%al")); //                        set bit to 1 if eax was not zero
+                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //               zero out EAX without changing ZF
+                code.push(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
                 code.push(CodeLine::lbl(&end));
             }
             Expression::BinaryOp(BinaryOp::LogicalAnd, e1, e2) => {
@@ -654,14 +658,14 @@ impl Generator {
                 code = self.generate_expression_code(e1);
                 // if false then just jump over second part and set false
                 // else evaluate second part and set to return status of that
-                code.push(CodeLine::i3("cmp", "$0", &self.rega)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("jne", &cond2)); //                         if ZF is not, go to cond2
-                code.push(CodeLine::i2("jmp", &end)); //                           else we are done (and eax is 0), so jump to end.
+                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                code.push(CodeLine::i2("jne", &cond2)); //                           if ZF is not, go to cond2
+                code.push(CodeLine::i2("jmp", &end)); //                             else we are done (and eax is 0), so jump to end.
                 code.push(CodeLine::lbl(&cond2));
                 code.append(self.generate_expression_code(e2));
-                code.push(CodeLine::i3("cmp", "$0", &self.rega)); //               set ZF if EAX == 0
-                code.push(CodeLine::i3("mov", "$0", &self.rega)); //               zero out EAX without changing ZF
-                code.push(CodeLine::i2("setnz", "%al")); //                       set bit to 1 if eax was not zero
+                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //               zero out EAX without changing ZF
+                code.push(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
                 code.push(CodeLine::lbl(&end));
             }
             Expression::BinaryOp(bop, e1, e2) => {
@@ -671,63 +675,59 @@ impl Generator {
                 code.append(self.generate_expression_code(e2));
                 match bop {
                     BinaryOp::Addition => {
-                        code.push(CodeLine::i2("pop", &self.regc)); //             get arg1 from stack
-                        code.push(CodeLine::i3("add", &self.regc, &self.rega)); // add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                        code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
+                        code.push(CodeLine::i3("add", &self.regc32, &self.rega32)); //   add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
                     }
                     BinaryOp::Subtraction => {
-                        code.push(CodeLine::i3("mov", &self.rega, &self.regc)); //   copy arg2 into %ecx
-                        code.push(CodeLine::i2("pop", &self.rega)); //               get arg1 from stack into %eax
-                        code.push(CodeLine::i3("sub", &self.regc, &self.rega)); //   subtract %eax (arg1) - %ecx (arg2) -> %eax
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
+                        code.push(CodeLine::i2("pop", &self.rega)); //                   get arg1 from stack into %eax
+                        code.push(CodeLine::i3("sub", &self.regc32, &self.rega32)); //   subtract %eax (arg1) - %ecx (arg2) -> %eax
                     }
                     BinaryOp::Multiplication => {
-                        code.push(CodeLine::i2("pop", &self.regc)); //             get arg1 from stack
-                        code.push(CodeLine::i3("imul", &self.regc, &self.rega));
+                        code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
+                        code.push(CodeLine::i3("imul", &self.regc32, &self.rega32));
                         // add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
                     }
                     BinaryOp::Division => {
-                        code.push(CodeLine::i3("mov", &self.rega, &self.regc)); //  copy arg2 into %ecx
-                        code.push(CodeLine::i2("pop", &self.rega)); //              restore first operand into %eax
-                        if self.emit_32bit {
-                            code.push(CodeLine::i1("cdq")); //                      sign extend %eax into %edx:%eax
-                        } else {
-                            code.push(CodeLine::i1("cqo")); //                      sign extend %rax into %rdx:%rax
-                        }
-                        code.push(CodeLine::i2("idiv", &self.regc)); //             divide, numerator is in %eax, denominator is on stack, and result is in %eax.
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
+                        code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
+                        code.push(CodeLine::i1("cltd")); //                              sign extend %eax into %edx:%eax
+                        code.push(CodeLine::i2("idiv", &self.regc32)); //                idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
                     }
                     BinaryOp::Equal => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
-                        code.push(CodeLine::i3("cmp", &self.regc, &self.rega)); //        set ZF if EAX == ECX
-                        code.push(CodeLine::i3("mov", "$0", &self.rega)); //              zero out EAX without changing ZF
+                        code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("sete", "%al")); //                        set bit to 1 if ecx (op1) was equal to eax (op2)
                     }
                     BinaryOp::NotEqual => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
-                        code.push(CodeLine::i3("cmp", &self.regc, &self.rega)); //        set ZF if EAX == ECX
-                        code.push(CodeLine::i3("mov", "$0", &self.rega)); //              zero out EAX without changing ZF
+                        code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("setne", "%al")); //                       set bit to 1 if ecx (op1) was not equal to eax (op2)
                     }
                     BinaryOp::Less => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
-                        code.push(CodeLine::i3("cmp", &self.rega, &self.regc)); //        compare ECX and EAX
-                        code.push(CodeLine::i3("mov", "$0", &self.rega)); //              zero out EAX without changing ZF
+                        code.push(CodeLine::i3("cmp", &self.rega32, &self.regc32)); //    compare ECX and EAX
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("setl", "%al")); //                        set bit to 1 if ecx (op1) was less than eax (op2)
                     }
                     BinaryOp::Greater => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
-                        code.push(CodeLine::i3("cmp", &self.rega, &self.regc)); //        compare ECX and EAX
-                        code.push(CodeLine::i3("mov", "$0", &self.rega)); //              zero out EAX without changing ZF
+                        code.push(CodeLine::i3("cmp", &self.rega32, &self.regc32)); //    compare ECX and EAX
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("setg", "%al")); //                        set bit to 1 if ecx (op1) was greater than eax (op2)
                     }
                     BinaryOp::LessEqual => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
-                        code.push(CodeLine::i3("cmp", &self.rega, &self.regc)); //        compare ECX and EAX
-                        code.push(CodeLine::i3("mov", "$0", &self.rega)); //              zero out EAX without changing ZF
+                        code.push(CodeLine::i3("cmp", &self.rega32, &self.regc32)); //    compare ECX and EAX
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("setle", "%al")); //                       set bit to 1 if ecx (op1) was less than or equal to eax (op2)
                     }
                     BinaryOp::GreaterEqual => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                    pop op1 from stack
-                        code.push(CodeLine::i3("cmp", &self.rega, &self.regc)); //        compare ECX and EAX
-                        code.push(CodeLine::i3("mov", "$0", &self.rega)); //              zero out EAX without changing ZF
+                        code.push(CodeLine::i3("cmp", &self.rega32, &self.regc32)); //    compare ECX and EAX
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
                         code.push(CodeLine::i2("setge", "%al")); //                       set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
                     }
                     BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
@@ -739,21 +739,21 @@ impl Generator {
                 code = self.generate_expression_code(expr);
                 match uop {
                     UnaryOp::Negate => {
-                        code.push(CodeLine::i2("neg", &self.rega));
+                        code.push(CodeLine::i2("neg", &self.rega32));
                     }
                     UnaryOp::Not => {
-                        code.push(CodeLine::i3("cmp", "$0", &self.rega));
-                        code.push(CodeLine::i3("mov", "$0", &self.rega));
+                        code.push(CodeLine::i3("cmp", "$0", &self.rega32));
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32));
                         code.push(CodeLine::i2("sete", "%al"));
                     }
                     UnaryOp::Complement => {
-                        code.push(CodeLine::i2("not", &self.rega));
+                        code.push(CodeLine::i2("not", &self.rega32));
                     }
                 }
             }
             Expression::Constant(val) => {
                 let literal = format!("${}", val);
-                code.push(CodeLine::i3("mov", &literal, &self.rega));
+                code.push(CodeLine::i3("mov", &literal, &self.rega32));
             }
         }
         return code;
