@@ -42,6 +42,8 @@ enum Token {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    LeftShift,
+    RightShift,
     Not,
     Complement,
     Keyword(Keyword),
@@ -72,6 +74,8 @@ fn token_to_str(tok: &Token) -> String {
         Token::BitwiseAnd => "&".to_string(),
         Token::BitwiseOr => "|".to_string(),
         Token::BitwiseXor => "^".to_string(),
+        Token::LeftShift => "<<".to_string(),
+        Token::RightShift => ">>".to_string(),
         Token::Not => "!".to_string(),
         Token::Complement => "~".to_string(),
         Token::Keyword(kw) => match kw {
@@ -111,6 +115,8 @@ fn get_token_pattern(tok: &Token) -> &str {
         Token::NotEqual => r"^!=",
         Token::LessEqual => r"^<=",
         Token::GreaterEqual => r"^>=",
+        Token::LeftShift => r"^<<",
+        Token::RightShift => r"^>>",
         Token::Less => r"^<",
         Token::Greater => r"^>",
         Token::BitwiseAnd => r"^&",
@@ -167,6 +173,8 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::NotEqual,
         Token::LessEqual,
         Token::GreaterEqual,
+        Token::LeftShift,
+        Token::RightShift,
         Token::Less,
         Token::Greater,
         Token::Not,
@@ -242,6 +250,8 @@ enum BinaryOp {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    LeftShift,
+    RightShift,
 }
 
 #[derive(Debug)]
@@ -381,14 +391,12 @@ fn parse_additive_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression 
     return term;
 }
 
-fn parse_relational_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+fn parse_shift_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
     let mut adexpr = parse_additive_expression(tokiter);
     while let Some(tok) = tokiter.peek() {
         let optop = match tok {
-            Token::Greater => Some(BinaryOp::Greater),
-            Token::Less => Some(BinaryOp::Less),
-            Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
-            Token::LessEqual => Some(BinaryOp::LessEqual),
+            Token::LeftShift => Some(BinaryOp::LeftShift),
+            Token::RightShift => Some(BinaryOp::RightShift),
             _ => None,
         };
         if let Some(op) = optop {
@@ -400,6 +408,27 @@ fn parse_relational_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expressio
         }
     }
     return adexpr;
+}
+
+fn parse_relational_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
+    let mut shiftexpr = parse_shift_expression(tokiter);
+    while let Some(tok) = tokiter.peek() {
+        let optop = match tok {
+            Token::Greater => Some(BinaryOp::Greater),
+            Token::Less => Some(BinaryOp::Less),
+            Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
+            Token::LessEqual => Some(BinaryOp::LessEqual),
+            _ => None,
+        };
+        if let Some(op) = optop {
+            tokiter.next(); // consume
+            let next_shiftexpr = parse_shift_expression(tokiter);
+            shiftexpr = Expression::BinaryOp(op, Box::new(shiftexpr), Box::new(next_shiftexpr));
+        } else {
+            break;
+        }
+    }
+    return shiftexpr;
 }
 
 fn parse_equality_expression(tokiter: &mut Peekable<Iter<Token>>) -> Expression {
@@ -834,6 +863,16 @@ impl Generator {
                     BinaryOp::BitwiseAnd => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
                         code.push(CodeLine::i3("and", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                    }
+                    BinaryOp::LeftShift => {
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
+                        code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
+                        code.push(CodeLine::i3("sal", "%cl", &self.rega32)); //          do arithmetic left shift (== logical left shift), %eax = %eax << %cl
+                    }
+                    BinaryOp::RightShift => {
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
+                        code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
+                        code.push(CodeLine::i3("sar", "%cl", &self.rega32)); //          do arithmetic right shift, %eax = %eax >> %cl
                     }
                     BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                         panic!("Internal Error"); // Handled above separately
