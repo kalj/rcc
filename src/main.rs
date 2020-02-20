@@ -219,7 +219,19 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     return Err(TokenError { cursor: cursor });
 }
 
-fn tokenize(source: &str) -> Vec<Token> {
+struct TokNLoc {
+    token: Token,
+    location: usize,
+    length: usize
+}
+
+impl TokNLoc {
+    fn new(tok: Token, loc: usize, len: usize) -> TokNLoc {
+        TokNLoc { token: tok, location: loc, length: len }
+    }
+}
+
+fn tokenize(source: &str) -> Vec<TokNLoc> {
     let mut result = Vec::new();
 
     let len = source.len();
@@ -234,8 +246,9 @@ fn tokenize(source: &str) -> Vec<Token> {
         }
 
         let tok = get_token(source, cursor).unwrap();
-        cursor += token_length(&tok);
-        result.push(tok);
+        let toklen = token_length(&tok);
+        result.push(TokNLoc::new(tok,cursor,toklen));
+        cursor += toklen;
     }
 
     return result;
@@ -365,52 +378,71 @@ fn print_program(prog: &Program) {
 // Parsing
 //===================================================================
 
-fn parse_factor(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    match tokiter.peek().unwrap() {
+#[derive(Debug, Clone)]
+struct ParseError {
+    cursor: usize,
+    message: String
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ParseError {}: {}", self.cursor, self.message)
+    }
+}
+
+impl error::Error for ParseError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        None
+    }
+}
+
+
+fn parse_factor(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let tok = tokiter.peek().unwrap();
+    match &tok.token {
         Token::Lparen => {
             tokiter.next(); // consume
-            let subexpr = parse_expression(tokiter);
-            let tok = tokiter.next().unwrap();
-            match tok {
-                Token::Rparen => subexpr,
-                _ => panic!("Missing closing parenthesis after expression, got '{}'.", tok)
+            let subexpr = parse_expression(tokiter)?;
+            let tok = &tokiter.next().unwrap();
+            match tok.token {
+                Token::Rparen => Ok(subexpr),
+                _ => Err(ParseError{cursor:tok.location, message:format!("Missing closing parenthesis after expression, got '{}'.", tok.token)})
             }
         },
         Token::IntLiteral(v) => {
             tokiter.next(); // consume
-            Expression::Constant(*v)
+            Ok(Expression::Constant(*v))
         },
         Token::Minus => {
             tokiter.next(); // consume
-            let operand = parse_factor(tokiter);
-            Expression::UnaryOp(UnaryOp::Negate, Box::new(operand))
+            let operand = parse_factor(tokiter)?;
+            Ok(Expression::UnaryOp(UnaryOp::Negate, Box::new(operand)))
         },
         Token::Not => {
             tokiter.next(); // consume
-            let operand = parse_factor(tokiter);
-            Expression::UnaryOp(UnaryOp::Not, Box::new(operand))
+            let operand = parse_factor(tokiter)?;
+            Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(operand)))
         },
         Token::Complement => {
             tokiter.next(); // consume
-            let operand = parse_factor(tokiter);
-            Expression::UnaryOp(UnaryOp::Complement, Box::new(operand))
+            let operand = parse_factor(tokiter)?;
+            Ok(Expression::UnaryOp(UnaryOp::Complement, Box::new(operand)))
         },
         Token::Identifier(id) => {
             tokiter.next(); // consume
-            Expression::Variable(id.to_string())
+            Ok(Expression::Variable(id.to_string()))
         }
         _ => {
-            tokiter.reset_peek();
-            panic!("Invalid token for factor. Expected '(', '-', '!', '~', or an int literal, got '{}'.", tokiter.peek().unwrap());
+            Err(ParseError{cursor:tok.location, message:format!("Invalid token for factor. Expected '(', '-', '!', '~', or an int literal, got '{}'.", tok.token)})
         }
     }
 }
 
-fn parse_term(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut factor = parse_factor(tokiter);
+fn parse_term(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut factor = parse_factor(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        let optop = match tok {
+        let optop = match tok.token {
             Token::Multiplication => Some(BinaryOp::Multiplication),
             Token::Division => Some(BinaryOp::Division),
             Token::Remainder => Some(BinaryOp::Remainder),
@@ -418,64 +450,64 @@ fn parse_term(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_factor = parse_factor(tokiter);
+            let next_factor = parse_factor(tokiter)?;
             factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
         } else {
             break;
         }
     }
     tokiter.reset_peek();
-    return factor;
+    return Ok(factor);
 }
 
-fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
+fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
 
-    let mut term = parse_term(tokiter);
+    let mut term = parse_term(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        let optop = match tok {
+        let optop = match tok.token {
             Token::Minus => Some(BinaryOp::Subtraction),
             Token::Plus => Some(BinaryOp::Addition),
             _ => None,
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_term = parse_term(tokiter);
+            let next_term = parse_term(tokiter)?;
             term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
         } else {
             break;
         }
     }
     tokiter.reset_peek();
-    return term;
+    return Ok(term);
 }
 
-fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut adexpr = parse_additive_expression(tokiter);
+fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut adexpr = parse_additive_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        let optop = match tok {
+        let optop = match tok.token {
             Token::LeftShift => Some(BinaryOp::LeftShift),
             Token::RightShift => Some(BinaryOp::RightShift),
             _ => None,
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_adexpr = parse_additive_expression(tokiter);
+            let next_adexpr = parse_additive_expression(tokiter)?;
             adexpr = Expression::BinaryOp(op, Box::new(adexpr), Box::new(next_adexpr));
         } else {
             break;
         }
     }
     tokiter.reset_peek();
-    return adexpr;
+    return Ok(adexpr);
 }
 
-fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut shiftexpr = parse_shift_expression(tokiter);
+fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut shiftexpr = parse_shift_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        let optop = match tok {
+        let optop = match tok.token {
             Token::Greater => Some(BinaryOp::Greater),
             Token::Less => Some(BinaryOp::Less),
             Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
@@ -484,7 +516,7 @@ fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expressi
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_shiftexpr = parse_shift_expression(tokiter);
+            let next_shiftexpr = parse_shift_expression(tokiter)?;
             shiftexpr = Expression::BinaryOp(op, Box::new(shiftexpr), Box::new(next_shiftexpr));
         } else {
             break;
@@ -492,37 +524,37 @@ fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expressi
     }
 
     tokiter.reset_peek();
-    return shiftexpr;
+    return Ok(shiftexpr);
 }
 
-fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut relexpr = parse_relational_expression(tokiter);
+fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut relexpr = parse_relational_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        let optop = match tok {
+        let optop = match tok.token {
             Token::Equal => Some(BinaryOp::Equal),
             Token::NotEqual => Some(BinaryOp::NotEqual),
             _ => None,
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_relexpr = parse_relational_expression(tokiter);
+            let next_relexpr = parse_relational_expression(tokiter)?;
             relexpr = Expression::BinaryOp(op, Box::new(relexpr), Box::new(next_relexpr));
         } else {
             break;
         }
     }
     tokiter.reset_peek();
-    return relexpr;
+    return Ok(relexpr);
 }
 
-fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut eqexpr = parse_equality_expression(tokiter);
+fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut eqexpr = parse_equality_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        if let Token::BitwiseAnd = tok {
+        if let Token::BitwiseAnd = tok.token {
             tokiter.next(); // consume
-            let next_eqexpr = parse_equality_expression(tokiter);
+            let next_eqexpr = parse_equality_expression(tokiter)?;
             eqexpr = Expression::BinaryOp(
                 BinaryOp::BitwiseAnd,
                 Box::new(eqexpr),
@@ -534,16 +566,16 @@ fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Express
         }
     }
     tokiter.reset_peek();
-    return eqexpr;
+    return Ok(eqexpr);
 }
 
-fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut bandexpr = parse_bitwise_and_expression(tokiter);
+fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut bandexpr = parse_bitwise_and_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        if let Token::BitwiseXor = tok {
+        if let Token::BitwiseXor = tok.token {
             tokiter.next(); // consume
-            let next_bandexpr = parse_bitwise_and_expression(tokiter);
+            let next_bandexpr = parse_bitwise_and_expression(tokiter)?;
             bandexpr = Expression::BinaryOp(
                 BinaryOp::BitwiseXor,
                 Box::new(bandexpr),
@@ -555,16 +587,16 @@ fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Express
         }
     }
     tokiter.reset_peek();
-    return bandexpr;
+    return Ok(bandexpr);
 }
 
-fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut bxorexpr = parse_bitwise_xor_expression(tokiter);
+fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut bxorexpr = parse_bitwise_xor_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        if let Token::BitwiseOr = tok {
+        if let Token::BitwiseOr = tok.token {
             tokiter.next(); // consume
-            let next_bxorexpr = parse_bitwise_xor_expression(tokiter);
+            let next_bxorexpr = parse_bitwise_xor_expression(tokiter)?;
             bxorexpr = Expression::BinaryOp(
                 BinaryOp::BitwiseOr,
                 Box::new(bxorexpr),
@@ -576,16 +608,16 @@ fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expressi
         }
     }
     tokiter.reset_peek();
-    return bxorexpr;
+    return Ok(bxorexpr);
 }
 
-fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
-    let mut borexpr = parse_bitwise_or_expression(tokiter);
+fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut borexpr = parse_bitwise_or_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        if let Token::LogicalAnd = tok{
+        if let Token::LogicalAnd = tok.token {
             tokiter.next(); // consume
-            let next_borexpr = parse_bitwise_or_expression(tokiter);
+            let next_borexpr = parse_bitwise_or_expression(tokiter)?;
             borexpr = Expression::BinaryOp(
                 BinaryOp::LogicalAnd,
                 Box::new(borexpr),
@@ -597,17 +629,17 @@ fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Express
         }
     }
     tokiter.reset_peek();
-    return borexpr;
+    return Ok(borexpr);
 }
 
-fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
+fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
 
-    let mut laexpr = parse_logical_and_expression(tokiter);
+    let mut laexpr = parse_logical_and_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
-        if let Token::LogicalOr = tok {
+        if let Token::LogicalOr = tok.token {
             tokiter.next(); // consume
-            let next_laexpr = parse_logical_and_expression(tokiter);
+            let next_laexpr = parse_logical_and_expression(tokiter)?;
             laexpr = Expression::BinaryOp(
                 BinaryOp::LogicalOr,
                 Box::new(laexpr),
@@ -619,18 +651,18 @@ fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expressi
         }
     }
     tokiter.reset_peek();
-    return laexpr;
+    return Ok(laexpr);
 }
 
-fn parse_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
+fn parse_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
 
-    match tokiter.peek().unwrap() {
+    match &tokiter.peek().unwrap().token {
         Token::Identifier(id) => {
-            if let Token::Assignment = tokiter.peek().unwrap() {
+            if let Token::Assignment = tokiter.peek().unwrap().token {
                 tokiter.next(); // consume twice
                 tokiter.next();
-                let expr = parse_expression(tokiter);
-                return Expression::Assign(id.to_string(),Box::new(expr))
+                let expr = parse_expression(tokiter)?;
+                return Ok(Expression::Assign(id.to_string(),Box::new(expr)))
             }
         }
         _ => ()
@@ -640,29 +672,29 @@ fn parse_expression(tokiter: &mut MultiPeek<Iter<Token>>) -> Expression {
     return parse_logical_or_expression(tokiter);
 }
 
-fn parse_statement(tokiter: &mut MultiPeek<Iter<Token>>) -> Statement {
+fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement,ParseError> {
 
-    let stmt = match tokiter.peek().unwrap() {
+    let stmt = match tokiter.peek().unwrap().token {
         Token::Keyword(Keyword::Return) => {
             tokiter.next(); // consume
-            Statement::Return(parse_expression(tokiter))
+            Statement::Return(parse_expression(tokiter)?)
         },
         Token::Keyword(Keyword::Int) => {
             tokiter.next(); // consume
 
             let mut tok = tokiter.next().unwrap();
             let name =
-                match tok {
+                match &tok.token {
                     Token::Identifier(n) => n,
-                    _ => panic!("Invalid declaration statement. Expected an identifier, got '{}'.", tok)
+                    _ => return Err(ParseError{cursor:tok.location, message:format!("Invalid declaration statement. Expected an identifier, got '{}'.", tok.token)})
                 };
 
             // parse initialization if next token is an assignment (equals sign)
             tok = tokiter.peek().unwrap();
-            let init = match tok {
+            let init = match tok.token {
                 Token::Assignment => {
                     tokiter.next(); // consume
-                    Some(parse_expression(tokiter))
+                    Some(parse_expression(tokiter)?)
                 },
                 _ => {
                     tokiter.reset_peek();
@@ -675,23 +707,23 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<Token>>) -> Statement {
         _ => {
             tokiter.reset_peek();
             // then we have an expression to parse
-            Statement::Expr(parse_expression(tokiter))
+            Statement::Expr(parse_expression(tokiter)?)
         }
     };
 
     // ensure last token is a semicolon
     let tok = tokiter.next().unwrap();
-    if let Token::Semicolon = tok {}
+    if let Token::Semicolon = tok.token {}
     else {
-        panic!("Invalid statement. Expected a final semicolon, got '{}'.", tok);
+        return Err(ParseError{cursor:tok.location, message:format!("Invalid statement. Expected a final semicolon, got '{}'.", tok.token)});
     }
 
-    return stmt;
+    return Ok(stmt);
 }
 
-fn parse_function(tokiter: &mut MultiPeek<Iter<Token>>) -> Function {
+fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function,ParseError> {
     // ensure first token is an Int keyword
-    let mut tok = tokiter.next().unwrap();
+    let mut tok = &tokiter.next().unwrap().token;
 
     if let Token::Keyword(Keyword::Int) = tok {}
     else {
@@ -699,7 +731,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<Token>>) -> Function {
     }
 
     // next token should be an identifier
-    tok = tokiter.next().unwrap();
+    tok = &tokiter.next().unwrap().token;
     let function_name = match tok {
         Token::Identifier(ident) => ident,
         _ => panic!(
@@ -709,21 +741,21 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<Token>>) -> Function {
     };
 
     // ensure next token is '('
-    tok = tokiter.next().unwrap();
+    tok = &tokiter.next().unwrap().token;
     if let Token::Lparen = tok {}
     else {
         panic!("Invalid function declaration. Expected '(', got '{}'.", tok);
     }
 
     // ensure next token is ')'
-    tok = tokiter.next().unwrap();
+    tok = &tokiter.next().unwrap().token;
     if let Token::Rparen = tok {}
     else {
         panic!("Invalid function declaration. Expected ')', got '{}'.", tok);
     }
 
     // ensure next token is '{'
-    tok = tokiter.next().unwrap();
+    tok = &tokiter.next().unwrap().token;
     if let Token::Lbrace = tok {}
     else {
         panic!("Invalid function declaration. Expected '{{', got '{}'.", tok);
@@ -733,22 +765,22 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<Token>>) -> Function {
     let mut statements = Vec::new();
 
     loop {
-        tok = tokiter.peek().unwrap();
+        tok = &tokiter.peek().unwrap().token;
         if let Token::Rbrace = tok {
             break;
         }
         tokiter.reset_peek();
-        statements.push(parse_statement(tokiter));
+        statements.push(parse_statement(tokiter)?);
     }
 
-    return Function::Func(function_name.to_string(), statements);
+    return Ok(Function::Func(function_name.to_string(), statements));
 }
 
-fn parse_program(tokiter: &mut MultiPeek<Iter<Token>>) -> Program {
-    return Program::Prog(parse_function(tokiter));
+fn parse_program(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Program,ParseError> {
+    return Ok(Program::Prog(parse_function(tokiter)?));
 }
 
-fn parse(tokens: &[Token]) -> Program {
+fn parse(tokens: &[TokNLoc]) -> Result<Program,ParseError> {
     let mut tokiter = itertools::multipeek(tokens.iter());
     return parse_program(&mut tokiter);
 }
@@ -1106,11 +1138,17 @@ fn main() {
 
     if verbose {
         println!("After tokenization:");
-        let tokenstrs: Vec<String> = tokens.iter().map(|t| format!("{}", t)).collect();
+        let tokenstrs: Vec<String> = tokens.iter().map(|t| format!("{}", t.token)).collect();
         println!("{}", tokenstrs.join(" "));
     }
 
-    let program = parse(&tokens);
+    let program = match parse(&tokens) {
+        Ok(prog) => prog,
+        Err(err) => {
+            println!("{}",err);
+            std::process::exit(1);
+        }
+    };
 
     if verbose {
         println!("After parsing:");
