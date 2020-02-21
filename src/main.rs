@@ -1145,7 +1145,23 @@ fn main() {
     let program = match parse(&tokens) {
         Ok(prog) => prog,
         Err(err) => {
-            println!("{}",err);
+            let mut line_starts = Vec::new();
+            line_starts.push(0 as usize);
+            let re = Regex::new(r"\n").unwrap();
+            for m in re.find_iter(&source) {
+                line_starts.push(m.start()+1);
+            }
+
+            line_starts.push(source.len()); // put the end of file last
+
+            let row = line_starts.iter().rposition(|ls| { ls <= &err.cursor }).unwrap();
+            let col = err.cursor - line_starts[row];
+            let rowstart = line_starts[row];
+            let rowend = line_starts[row+1];
+
+            println!("{}:{}:{}:ParseError: {}",source_path.display(), row, col, err.message);
+            println!("{}",&source[rowstart..rowend]);
+            println!("{:<1$}^", "", col);
             std::process::exit(1);
         }
     };
