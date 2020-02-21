@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 use itertools::MultiPeek;
+use std::collections::HashMap;
 
 //===================================================================
 // Tokenizing
@@ -343,14 +344,14 @@ fn print_statement(stmt: &Statement, lvl: i32) {
             print_expression(expr, lvl + 1);
             println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
-        Statement::Decl(name,init) => {
+        Statement::Decl(id,init) => {
             if let Some(expr) = init {
-                println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, name);
+                println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id);
                 print_expression(expr, lvl + 1);
                 println!("{: <1$}}}", "", (lvl * 2) as usize);
             }
             else {
-                println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, name);
+                println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id);
             }
         }
         Statement::Expr(expr) => {
@@ -683,7 +684,7 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement,P
             tokiter.next(); // consume
 
             let mut tok = tokiter.next().unwrap();
-            let name =
+            let id =
                 match &tok.token {
                     Token::Identifier(n) => n,
                     _ => return Err(ParseError{cursor:tok.location, message:format!("Invalid declaration statement. Expected an identifier, got '{}'.", tok.token)})
@@ -702,7 +703,7 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement,P
                 }
             };
 
-            Statement::Decl(name.to_string(), init)
+            Statement::Decl(id.to_string(), init)
         },
         _ => {
             tokiter.reset_peek();
@@ -853,32 +854,47 @@ struct Generator {
     label_counter: i32,
     rega: String,
     regc: String,
+    regbp: String,
+    regsp: String,
     rega32: String,
     regc32: String,
     regd32: String,
+    bytes_per_reg: usize,
+    var_map: HashMap<String,i32>,
+    var_stack_index: i32,
 }
 
 impl Generator {
     fn new(emit_32bit: bool) -> Generator {
+        let bytes_per_reg = if emit_32bit { 4 } else { 8 };
         Generator {
             emit_32bit: emit_32bit,
             label_counter: 0,
             rega: (if emit_32bit { "%eax" } else { "%rax" }).to_string(),
             regc: (if emit_32bit { "%ecx" } else { "%rcx" }).to_string(),
+            regbp: (if emit_32bit { "%ebp" } else { "%rbp" }).to_string(),
+            regsp: (if emit_32bit { "%esp" } else { "%rsp" }).to_string(),
             rega32: "%eax".to_string(),
             regc32: "%ecx".to_string(),
             regd32: "%edx".to_string(),
+            bytes_per_reg: bytes_per_reg,
+            var_map: HashMap::new(),
+            var_stack_index: -(bytes_per_reg as i32),
         }
     }
 
     fn generate_expression_code(&mut self, expr: &Expression) -> Code {
         let mut code = Code::new();
         match expr {
-            Expression::Assign(name, expr) => {
+            Expression::Assign(id, expr) => {
+                code = self.generate_expression_code(expr);
+                let var_offset = self.var_map[id];
+                code.push(CodeLine::i3("mov", &self.rega, &format!("{}({})", var_offset, self.regbp)));
 
             }
             Expression::Variable(id) => {
-
+                let var_offset = self.var_map[id];
+                code.push(CodeLine::i3("mov",&format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2) => {
                 // setup labels
@@ -1040,14 +1056,28 @@ impl Generator {
     }
 
     fn generate_statement_code(&mut self, stmnt: Statement) -> Code {
-        let mut code;
+        let mut code = Code::new();
         match stmnt {
             Statement::Return(expr) => {
                 code = self.generate_expression_code(&expr);
+                code.push(CodeLine::i3("mov", &self.regbp, &self.regsp));
+                code.push(CodeLine::i2("pop", &self.regbp));
                 code.push(CodeLine::i1("ret"));
             }
-            Statement::Decl(name, init) => {
-                code = Code::new();
+            Statement::Decl(id, init) => {
+                if self.var_map.contains_key(&id) {
+                    panic!("Variable {} already declared",id);
+                }
+                if let Some(expr) = init {
+                    code = self.generate_expression_code(&expr);      // possibly compute initial value, saved in %rax
+                }
+                else {
+                    code.push(CodeLine::i3("mov", "$0", &self.rega)); // otherwise initialize %rax with 0
+                }
+                code.push(CodeLine::i2("push", &self.rega));          // push value on stack at known index
+                self.var_map.insert(id, self.var_stack_index);        // save name and stack offset
+                self.var_stack_index -= self.bytes_per_reg as i32;    // update stack index
+
             }
             Statement::Expr(expr) => {
                code = self.generate_expression_code(&expr);
@@ -1056,17 +1086,34 @@ impl Generator {
         return code;
     }
 
-    fn generate_program_code(&mut self, prog: Program) -> Code {
+    fn generate_function_code(&mut self, func: Function) -> Code {
         let mut code = Code::new();
-        match prog {
-            Program::Prog(Function::Func(name, body)) => {
-                code.push(CodeLine::i2(".globl", &name));
-                code.push(CodeLine::lbl(&name));
-                for stmt in body {
-                    code.append(self.generate_statement_code(stmt));
-                }
-            }
+
+        let Function::Func(name, body) = func;
+        code.push(CodeLine::i2(".globl", &name));
+        code.push(CodeLine::lbl(&name));
+        code.push(CodeLine::i2("push", &self.regbp));
+        code.push(CodeLine::i3("mov", &self.regsp, &self.regbp));
+        for stmt in body {
+            code.append(self.generate_statement_code(stmt));
         }
+
+        if ! code.code.iter().any(|cl| {
+            if let CodeLine::Instr1(op) = cl {
+                op=="ret"
+            }
+            else {
+                false
+            }
+        }) {
+            code.append(self.generate_statement_code(Statement::Return(Expression::Constant(0))));
+        }
+        return code;
+    }
+
+    fn generate_program_code(&mut self, prog: Program) -> Code {
+        let Program::Prog(func) = prog;
+        let code = self.generate_function_code(func);
         return code;
     }
 }
