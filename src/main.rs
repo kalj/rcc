@@ -34,6 +34,8 @@ enum Token {
     Remainder,
     Plus,
     Minus,
+    Not,
+    Complement,
     LogicalAnd,
     LogicalOr,
     Equal,
@@ -47,11 +49,16 @@ enum Token {
     BitwiseXor,
     LeftShift,
     RightShift,
-    Not,
-    Complement,
     Keyword(Keyword),
     Identifier(String),
     IntLiteral(i64),
+}
+
+fn keyword_to_str(kw: &Keyword) -> String {
+    match kw {
+        Keyword::Int => "int".to_string(),
+        Keyword::Return => "return".to_string(),
+    }
 }
 
 fn token_to_str(tok: &Token) -> String {
@@ -67,6 +74,8 @@ fn token_to_str(tok: &Token) -> String {
         Token::Remainder => "%".to_string(),
         Token::Plus => "+".to_string(),
         Token::Minus => "-".to_string(),
+        Token::Not => "!".to_string(),
+        Token::Complement => "~".to_string(),
         Token::LogicalAnd => "&&".to_string(),
         Token::LogicalOr => "||".to_string(),
         Token::Equal => "==".to_string(),
@@ -80,12 +89,7 @@ fn token_to_str(tok: &Token) -> String {
         Token::BitwiseXor => "^".to_string(),
         Token::LeftShift => "<<".to_string(),
         Token::RightShift => ">>".to_string(),
-        Token::Not => "!".to_string(),
-        Token::Complement => "~".to_string(),
-        Token::Keyword(kw) => match kw {
-            Keyword::Int => "int".to_string(),
-            Keyword::Return => "return".to_string(),
-        },
+        Token::Keyword(kw) => keyword_to_str(kw),
         Token::Identifier(ident) => ident.to_string(),
         Token::IntLiteral(val) => val.to_string(),
     }
