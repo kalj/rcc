@@ -49,6 +49,16 @@ enum Token {
     BitwiseXor,
     LeftShift,
     RightShift,
+    AdditionAssignment,
+    SubtractionAssignment,
+    MultiplicationAssignment,
+    DivisionAssignment,
+    RemainderAssignment,
+    BitwiseXorAssignment,
+    BitwiseOrAssignment,
+    BitwiseAndAssignment,
+    LeftShiftAssignment,
+    RightShiftAssignment,
     Keyword(Keyword),
     Identifier(String),
     IntLiteral(i64),
@@ -89,6 +99,16 @@ fn token_to_str(tok: &Token) -> String {
         Token::BitwiseXor => "^".to_string(),
         Token::LeftShift => "<<".to_string(),
         Token::RightShift => ">>".to_string(),
+        Token::AdditionAssignment => "+=".to_string(),
+        Token::SubtractionAssignment => "-=".to_string(),
+        Token::MultiplicationAssignment => "*=".to_string(),
+        Token::DivisionAssignment => "/=".to_string(),
+        Token::RemainderAssignment => "%=".to_string(),
+        Token::BitwiseXorAssignment => "^=".to_string(),
+        Token::BitwiseOrAssignment => "|=".to_string(),
+        Token::BitwiseAndAssignment => "&=".to_string(),
+        Token::LeftShiftAssignment => "<<=".to_string(),
+        Token::RightShiftAssignment => ">>=".to_string(),
         Token::Keyword(kw) => keyword_to_str(kw),
         Token::Identifier(ident) => ident.to_string(),
         Token::IntLiteral(val) => val.to_string(),
@@ -133,6 +153,27 @@ impl error::Error for TokenError {
 
 fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     let toktypes = [
+        // patterns of length 3
+        Token::LeftShiftAssignment,
+        Token::RightShiftAssignment,
+        // patterns of length 2
+        Token::LogicalAnd,
+        Token::LogicalOr,
+        Token::Equal,
+        Token::NotEqual,
+        Token::LessEqual,
+        Token::GreaterEqual,
+        Token::LeftShift,
+        Token::RightShift,
+        Token::AdditionAssignment,
+        Token::SubtractionAssignment,
+        Token::MultiplicationAssignment,
+        Token::DivisionAssignment,
+        Token::RemainderAssignment,
+        Token::BitwiseXorAssignment,
+        Token::BitwiseOrAssignment,
+        Token::BitwiseAndAssignment,
+        // patterns of length 1
         Token::Semicolon,
         Token::Lparen,
         Token::Rparen,
@@ -145,22 +186,15 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Remainder,
         Token::Plus,
         Token::Minus,
-        Token::LogicalAnd,
-        Token::LogicalOr,
         Token::BitwiseAnd,
         Token::BitwiseOr,
         Token::BitwiseXor,
-        Token::Equal,
-        Token::NotEqual,
-        Token::LessEqual,
-        Token::GreaterEqual,
-        Token::LeftShift,
-        Token::RightShift,
         Token::Less,
         Token::Greater,
         Token::Not,
         Token::Complement,
         Token::Assignment,
+        // generic patterns
         Token::Keyword(Keyword::Int),
         Token::Keyword(Keyword::Return),
         Token::Identifier("a".to_string()), // with placeholder
@@ -261,8 +295,23 @@ enum UnaryOp {
 }
 
 #[derive(Debug)]
+enum AssignmentKind {
+    Write,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    BitwiseXor,
+    BitwiseOr,
+    BitwiseAnd,
+    LeftShift,
+    RightShift,
+}
+
+#[derive(Debug)]
 enum Expression {
-    Assign(String, Box<Expression>),
+    Assign(AssignmentKind, String, Box<Expression>),
     BinaryOp(BinaryOp, Box<Expression>, Box<Expression>),
     UnaryOp(UnaryOp, Box<Expression>),
     Constant(i64),
@@ -288,8 +337,8 @@ enum Program {
 
 fn print_expression(expr: &Expression, lvl: i32) {
     match expr {
-        Expression::Assign(var, exp) => {
-            println!("{:<1$}Assign {2:?} {{", "", (lvl * 2) as usize, var);
+        Expression::Assign(kind, var, exp) => {
+            println!("{:<1$}Assign {2:?} {3:?} {{", "", (lvl * 2) as usize, var, kind);
             print_expression(exp, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
@@ -635,11 +684,27 @@ fn parse_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression
 
     match &tokiter.peek().unwrap().token {
         Token::Identifier(id) => {
-            if let Token::Assignment = tokiter.peek().unwrap().token {
+
+            let ass = match tokiter.peek().unwrap().token {
+                Token::Assignment => Some(AssignmentKind::Write),
+                Token::AdditionAssignment => Some(AssignmentKind::Add),
+                Token::SubtractionAssignment => Some(AssignmentKind::Subtract),
+                Token::MultiplicationAssignment => Some(AssignmentKind::Multiply),
+                Token::DivisionAssignment => Some(AssignmentKind::Divide),
+                Token::RemainderAssignment => Some(AssignmentKind::Remainder),
+                Token::BitwiseXorAssignment => Some(AssignmentKind::BitwiseXor),
+                Token::BitwiseOrAssignment => Some(AssignmentKind::BitwiseOr),
+                Token::BitwiseAndAssignment => Some(AssignmentKind::BitwiseAnd),
+                Token::LeftShiftAssignment => Some(AssignmentKind::LeftShift),
+                Token::RightShiftAssignment => Some(AssignmentKind::RightShift),
+                _ => None,
+            };
+
+            if let Some(asskind) = ass {
                 tokiter.next(); // consume twice
                 tokiter.next();
                 let expr = parse_expression(tokiter)?;
-                return Ok(Expression::Assign(id.to_string(),Box::new(expr)))
+                return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr)))
             }
         }
         _ => ()
@@ -862,10 +927,14 @@ impl Generator {
     fn generate_expression_code(&mut self, expr: &Expression) -> Code {
         let mut code = Code::new();
         match expr {
-            Expression::Assign(id, expr) => {
+            Expression::Assign(kind, id, expr) => {
                 code = self.generate_expression_code(expr);
                 let var_offset = self.var_map[id];
-                code.push(CodeLine::i3("mov", &self.rega, &format!("{}({})", var_offset, self.regbp)));
+                match kind {
+                    AssignmentKind::Write =>
+                        code.push(CodeLine::i3("mov", &self.rega, &format!("{}({})", var_offset, self.regbp))),
+                    _ => {}
+                }
 
             }
             Expression::Variable(id) => {
@@ -928,8 +997,7 @@ impl Generator {
                     }
                     BinaryOp::Multiplication => {
                         code.push(CodeLine::i2("pop", &self.regc)); //                   get arg1 from stack
-                        code.push(CodeLine::i3("imul", &self.regc32, &self.rega32));
-                        // add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                        code.push(CodeLine::i3("imul", &self.regc32, &self.rega32)); //  multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
                     }
                     BinaryOp::Division => {
                         code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
