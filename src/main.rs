@@ -105,40 +105,12 @@ fn token_length(tok: &Token) -> usize {
     token_to_str(tok).len()
 }
 
-fn get_token_pattern(tok: &Token) -> &str {
+fn get_token_pattern(tok: &Token) -> String {
     match tok {
-        Token::Assignment => r"^=",
-        Token::Lparen => r"^\(",
-        Token::Rparen => r"^\)",
-        Token::Lbrace => r"^\{",
-        Token::Rbrace => r"^\}",
-        Token::Semicolon => r"^;",
-        Token::Multiplication => r"^\*",
-        Token::Division => r"^/",
-        Token::Remainder => r"^%",
-        Token::Plus => r"^\+",
-        Token::Minus => r"^-",
-        Token::LogicalAnd => r"^&&",
-        Token::LogicalOr => r"^\|\|",
-        Token::Equal => r"^==",
-        Token::NotEqual => r"^!=",
-        Token::LessEqual => r"^<=",
-        Token::GreaterEqual => r"^>=",
-        Token::LeftShift => r"^<<",
-        Token::RightShift => r"^>>",
-        Token::Less => r"^<",
-        Token::Greater => r"^>",
-        Token::BitwiseAnd => r"^&",
-        Token::BitwiseOr => r"^\|",
-        Token::BitwiseXor => r"^\^",
-        Token::Not => r"^!",
-        Token::Complement => r"^~",
-        Token::Keyword(kw) => match kw {
-            Keyword::Int => r"^int\W",
-            Keyword::Return => r"^return\W",
-        },
-        Token::Identifier(_) => r"^([a-zA-Z]\w*)",
-        Token::IntLiteral(_) => r"^([0-9]+)",
+        Token::Keyword(kw) => format!(r"^{}\W",keyword_to_str(kw)),
+        Token::Identifier(_) => r"^([a-zA-Z]\w*)".to_string(),
+        Token::IntLiteral(_) => r"^([0-9]+)".to_string(),
+        _ => format!("^{}",regex::escape(&token_to_str(tok)))
     }
 }
 
@@ -196,7 +168,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     ];
 
     for t in toktypes.iter() {
-        let re = Regex::new(get_token_pattern(t)).expect(&format!(
+        let re = Regex::new(&get_token_pattern(t)).expect(&format!(
             "Failed building regex object for token type {:?}",
             t
         ));
