@@ -924,6 +924,12 @@ impl Generator {
         }
     }
 
+    fn gen_div32_code(&self) -> Code {
+        Code {
+            code:vec![CodeLine::i1("cltd"), //                sign extend %eax into %edx:%eax
+                      CodeLine::i2("idiv", &self.regc32)]} //  idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+    }
+
     fn generate_expression_code(&mut self, expr: &Expression) -> Code {
         let mut code = Code::new();
         match expr {
@@ -932,10 +938,44 @@ impl Generator {
                 let var_offset = self.var_map[id];
                 match kind {
                     AssignmentKind::Write =>
-                        code.push(CodeLine::i3("mov", &self.rega, &format!("{}({})", var_offset, self.regbp))),
-                    _ => {}
+                        code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp))),
+                    AssignmentKind::Add =>
+                        code.push(CodeLine::i3("add", &self.rega32, &format!("{}({})", var_offset, self.regbp))),
+                    AssignmentKind::Subtract =>
+                        code.push(CodeLine::i3("sub", &self.rega32, &format!("{}({})", var_offset, self.regbp))),
+                    AssignmentKind::Multiply => {
+                        code.push(CodeLine::i3("imul", &format!("{}({})", var_offset, self.regbp),  &self.rega32));
+                        code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp)));
+                    }
+                    AssignmentKind::Divide => {
+                        // set up arguments for division/remainder, (%eax / %ecx -> [q:%eax,r:%edx] )
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                        code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
+                        code.append(self.gen_div32_code());
+                        code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp))); // copy result from %eax -> var
+                    },
+                    AssignmentKind::Remainder => {
+                        // set up arguments for division/remainder, (%eax / %ecx -> [q:%eax,r:%edx] )
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                        code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
+                        code.append(self.gen_div32_code());
+                        code.push(CodeLine::i3("mov", &self.regd32, &format!("{}({})", var_offset, self.regbp))); // copy result from %edx -> var
+                    },
+                    AssignmentKind::BitwiseXor =>
+                        code.push(CodeLine::i3("xor", &self.rega, &format!("{}({})", var_offset, self.regbp))),
+                    AssignmentKind::BitwiseOr =>
+                        code.push(CodeLine::i3("or", &self.rega, &format!("{}({})", var_offset, self.regbp))),
+                    AssignmentKind::BitwiseAnd =>
+                        code.push(CodeLine::i3("and", &self.rega, &format!("{}({})", var_offset, self.regbp))),
+                    AssignmentKind::LeftShift => {
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                        code.push(CodeLine::i3("sall", "%cl", &format!("{}({})", var_offset, self.regbp)));
+                    }
+                    AssignmentKind::RightShift => {
+                        code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                        code.push(CodeLine::i3("sarl", "%cl", &format!("{}({})", var_offset, self.regbp)));
+                    }
                 }
-
             }
             Expression::Variable(id) => {
                 let var_offset = self.var_map[id];
@@ -1000,16 +1040,18 @@ impl Generator {
                         code.push(CodeLine::i3("imul", &self.regc32, &self.rega32)); //  multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
                     }
                     BinaryOp::Division => {
+                        // set up arguments in registers for rega = rega / regc
+                        //                                or regd = rega % regc
                         code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
                         code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
-                        code.push(CodeLine::i1("cltd")); //                              sign extend %eax into %edx:%eax
-                        code.push(CodeLine::i2("idiv", &self.regc32)); //                idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                        code.append(self.gen_div32_code());
                     }
                     BinaryOp::Remainder => {
+                        // set up arguments in registers for rega = rega / regc
+                        //                                or regd = rega % regc
                         code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
                         code.push(CodeLine::i2("pop", &self.rega)); //                   restore first operand into %eax
-                        code.push(CodeLine::i1("cltd")); //                              sign extend %eax into %edx:%eax
-                        code.push(CodeLine::i2("idiv", &self.regc32)); //                idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                        code.append(self.gen_div32_code());
                         code.push(CodeLine::i3("mov", &self.regd32, &self.rega32)); //   copy result into %eax
                     }
                     BinaryOp::Equal => {
