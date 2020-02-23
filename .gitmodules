@@ -1,0 +1,6 @@
+[submodule "write_a_c_compiler"]
+	path = write_a_c_compiler
+	url = ./write_a_c_compiler
+[submodule "wacc"]
+	path = wacc
+	url = git@github.com:kalj/write_a_c_compiler.git
