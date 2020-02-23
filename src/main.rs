@@ -59,6 +59,8 @@ enum Token {
     BitwiseAndAssignment,
     LeftShiftAssignment,
     RightShiftAssignment,
+    Increment,
+    Decrement,
     Keyword(Keyword),
     Identifier(String),
     IntLiteral(i64),
@@ -109,6 +111,8 @@ fn token_to_str(tok: &Token) -> String {
         Token::BitwiseAndAssignment => "&=".to_string(),
         Token::LeftShiftAssignment => "<<=".to_string(),
         Token::RightShiftAssignment => ">>=".to_string(),
+        Token::Increment => "++".to_string(),
+        Token::Decrement => "--".to_string(),
         Token::Keyword(kw) => keyword_to_str(kw),
         Token::Identifier(ident) => ident.to_string(),
         Token::IntLiteral(val) => val.to_string(),
@@ -173,6 +177,8 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::BitwiseXorAssignment,
         Token::BitwiseOrAssignment,
         Token::BitwiseAndAssignment,
+        Token::Increment,
+        Token::Decrement,
         // patterns of length 1
         Token::Semicolon,
         Token::Lparen,
@@ -310,10 +316,18 @@ enum AssignmentKind {
 }
 
 #[derive(Debug)]
+enum FixOp {
+    Inc,
+    Dec
+}
+
+#[derive(Debug)]
 enum Expression {
     Assign(AssignmentKind, String, Box<Expression>),
     BinaryOp(BinaryOp, Box<Expression>, Box<Expression>),
     UnaryOp(UnaryOp, Box<Expression>),
+    PrefixOp(FixOp, String),
+    PostfixOp(FixOp, String),
     Constant(i64),
     Variable(String)
 }
@@ -352,6 +366,12 @@ fn print_expression(expr: &Expression, lvl: i32) {
             println!("{:<1$}UnaryOp {2:?} {{", "", (lvl * 2) as usize, unop);
             print_expression(exp, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
+        }
+        Expression::PrefixOp(fop, id) => {
+            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, fop, id);
+        }
+        Expression::PostfixOp(fop, id) => {
+            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, id, fop);
         }
         Expression::Variable(id) => {
             println!("{0:<1$}Variable {2}", "", (lvl * 2) as usize, id);
@@ -422,12 +442,10 @@ impl error::Error for ParseError {
     }
 }
 
-
-fn parse_factor(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
-    let tok = tokiter.peek().unwrap();
+fn parse_postfix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let tok = tokiter.next().unwrap();
     match &tok.token {
         Token::Lparen => {
-            tokiter.next(); // consume
             let subexpr = parse_expression(tokiter)?;
             let tok = &tokiter.next().unwrap();
             match tok.token {
@@ -435,37 +453,86 @@ fn parse_factor(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,Par
                 _ => Err(ParseError{cursor:tok.location, message:format!("Missing closing parenthesis after expression, got '{}'.", tok.token)})
             }
         },
+        Token::Identifier(id) => {
+            match tokiter.peek().unwrap().token {
+                Token::Increment => {
+                    tokiter.next(); // consume
+                    Ok(Expression::PostfixOp(FixOp::Inc, id.to_string()))
+                }
+                Token::Decrement => {
+                    tokiter.next(); // consume
+                    Ok(Expression::PostfixOp(FixOp::Dec, id.to_string()))
+                }
+                _ =>  {
+                    tokiter.reset_peek();
+                    Ok(Expression::Variable(id.to_string()))
+                }
+            }
+        }
         Token::IntLiteral(v) => {
-            tokiter.next(); // consume
             Ok(Expression::Constant(*v))
         },
-        Token::Minus => {
-            tokiter.next(); // consume
-            let operand = parse_factor(tokiter)?;
-            Ok(Expression::UnaryOp(UnaryOp::Negate, Box::new(operand)))
-        },
-        Token::Not => {
-            tokiter.next(); // consume
-            let operand = parse_factor(tokiter)?;
-            Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(operand)))
-        },
-        Token::Complement => {
-            tokiter.next(); // consume
-            let operand = parse_factor(tokiter)?;
-            Ok(Expression::UnaryOp(UnaryOp::Complement, Box::new(operand)))
-        },
-        Token::Identifier(id) => {
-            tokiter.next(); // consume
-            Ok(Expression::Variable(id.to_string()))
-        }
         _ => {
-            Err(ParseError{cursor:tok.location, message:format!("Invalid token for factor. Expected '(', '-', '!', '~', or an int literal, got '{}'.", tok.token)})
+            Err(ParseError{cursor:tok.location, message:format!("Invalid postfix expression. Expected int literal, (expr), or identifier possibly with postfix operator, but got '{}'.", tok.token)})
         }
     }
 }
 
-fn parse_term(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
-    let mut factor = parse_factor(tokiter)?;
+fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let tok = tokiter.peek().unwrap();
+    match &tok.token {
+        Token::Minus => {
+            tokiter.next(); // consume
+            let operand = parse_postfix_expression(tokiter)?;
+            Ok(Expression::UnaryOp(UnaryOp::Negate, Box::new(operand)))
+        },
+        Token::Not => {
+            tokiter.next(); // consume
+            let operand = parse_postfix_expression(tokiter)?;
+            Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(operand)))
+        },
+        Token::Complement => {
+            tokiter.next(); // consume
+            let operand = parse_postfix_expression(tokiter)?;
+            Ok(Expression::UnaryOp(UnaryOp::Complement, Box::new(operand)))
+        },
+        Token::Increment => {
+            tokiter.next(); // consume
+
+            let next_loc = tokiter.peek().unwrap().location; // for error message
+            tokiter.reset_peek();
+
+            let operand = parse_postfix_expression(tokiter)?;
+            if let Expression::Variable(id) = operand {
+                Ok(Expression::PrefixOp(FixOp::Inc,id))
+            }
+            else {
+                Err(ParseError{cursor:next_loc, message:format!("Invalid prefix expression. Expected variable identifier after prefix increment/decrement")})
+            }
+        }
+        Token::Decrement => {
+            tokiter.next(); // consume
+
+            let next_loc = tokiter.peek().unwrap().location; // for error message
+            tokiter.reset_peek();
+
+            let operand = parse_postfix_expression(tokiter)?;
+            if let Expression::Variable(id) = operand {
+                Ok(Expression::PrefixOp(FixOp::Dec,id))
+            }
+            else {
+                Err(ParseError{cursor:next_loc, message:format!("Invalid prefix expression. Expected variable identifier after prefix increment/decrement")})
+            }
+        }
+        _ => {
+            tokiter.reset_peek();
+            parse_postfix_expression(tokiter)
+        }
+    }
+}
+
+fn parse_multiplicative_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+    let mut factor = parse_prefix_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         let optop = match tok.token {
@@ -476,7 +543,7 @@ fn parse_term(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,Parse
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_factor = parse_factor(tokiter)?;
+            let next_factor = parse_prefix_expression(tokiter)?;
             factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
         } else {
             break;
@@ -488,7 +555,7 @@ fn parse_term(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,Parse
 
 fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
 
-    let mut term = parse_term(tokiter)?;
+    let mut term = parse_multiplicative_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         let optop = match tok.token {
@@ -498,7 +565,7 @@ fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<E
         };
         if let Some(op) = optop {
             tokiter.next(); // consume
-            let next_term = parse_term(tokiter)?;
+            let next_term = parse_multiplicative_expression(tokiter)?;
             term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
         } else {
             break;
@@ -937,14 +1004,12 @@ impl Generator {
             BinaryOp::Multiplication => {
                 code.push(CodeLine::i3("imul", &self.regc32, &self.rega32)); //  multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
             }
-            BinaryOp::Division => {
+            BinaryOp::Division|BinaryOp::Remainder => {
                 code.push(CodeLine::i1("cltd")); //                sign extend %eax into %edx:%eax
                 code.push(CodeLine::i2("idiv", &self.regc32)); //  idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
-            }
-            BinaryOp::Remainder => {
-                code.push(CodeLine::i1("cltd")); //                              sign extend %eax into %edx:%eax
-                code.push(CodeLine::i2("idiv", &self.regc32)); //                idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
-                code.push(CodeLine::i3("mov", &self.regd32, &self.rega32)); //   copy result into %eax
+                if let BinaryOp::Remainder = binop {
+                    code.push(CodeLine::i3("mov", &self.regd32, &self.rega32)); //   copy remainder into %eax
+                }
             }
             BinaryOp::Equal => {
                 code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
@@ -1006,9 +1071,6 @@ impl Generator {
                 code = self.generate_expression_code(expr);
                 let var_offset = self.var_map[id];
 
-                code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
-                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
-
                 let binop = match kind {
                     AssignmentKind::Write => None,
                     AssignmentKind::Add => Some(BinaryOp::Addition),
@@ -1024,8 +1086,11 @@ impl Generator {
                 };
 
                 if let Some(bop) = binop {
+                    code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                    code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
                     code.append(self.generate_binop_code(&bop));
                 }
+
                 code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp)));
             }
             Expression::Variable(id) => {
@@ -1095,6 +1160,28 @@ impl Generator {
                     UnaryOp::Complement => {
                         code.push(CodeLine::i2("not", &self.rega32));
                     }
+                }
+            }
+            Expression::PrefixOp(fixop, id) => {
+
+                let var_offset = self.var_map[id];
+                if let FixOp::Inc = fixop {
+                    code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
+                }
+                else {
+                    code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
+                }
+                code.push(CodeLine::i3("mov",&format!("{}({})", var_offset, self.regbp), &self.rega));
+            }
+            Expression::PostfixOp(fixop, id) => {
+
+                let var_offset = self.var_map[id];
+                code.push(CodeLine::i3("mov",&format!("{}({})", var_offset, self.regbp), &self.rega));
+                if let FixOp::Inc = fixop {
+                    code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
+                }
+                else {
+                    code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
                 }
             }
             Expression::Constant(val) => {
