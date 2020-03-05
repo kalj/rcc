@@ -242,7 +242,7 @@ impl TokNLoc {
     }
 }
 
-fn tokenize(source: &str) -> Vec<TokNLoc> {
+fn tokenize(source: &str) -> Result<Vec<TokNLoc>,TokenError> {
     let mut result = Vec::new();
 
     let len = source.len();
@@ -256,13 +256,13 @@ fn tokenize(source: &str) -> Vec<TokNLoc> {
             continue;
         }
 
-        let tok = get_token(source, cursor).unwrap();
+        let tok = get_token(source, cursor)?;
         let toklen = token_length(&tok);
         result.push(TokNLoc::new(tok, cursor, toklen));
         cursor += toklen;
     }
 
-    return result;
+    Ok(result)
 }
 
 #[derive(Debug)]
@@ -1206,6 +1206,27 @@ impl Generator {
     }
 }
 
+fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &str) {
+    let mut line_starts = Vec::new();
+    line_starts.push(0 as usize);
+
+    for m in source.match_indices('\n') {
+        let (idx,_) = m;
+        line_starts.push(idx + 1);
+    }
+
+    line_starts.push(source.len()); // put the end of file last
+
+    let row = line_starts.iter().rposition(|ls| ls <= &cursor).unwrap();
+    let col = cursor - line_starts[row];
+    let rowstart = line_starts[row];
+    let rowend = line_starts[row + 1];
+
+    println!("{}:{}:{}:{}", source_path.display(), row, col, msg);
+    println!("{}", &source[rowstart..rowend]);
+    println!("{:<1$}^", "", col);
+}
+
 fn main() {
     let matches = App::new("c-compiler")
         .arg(Arg::with_name("INPUT").help("The source file to compile").required(true))
@@ -1256,7 +1277,14 @@ fn main() {
         println!("{}", source);
     }
 
-    let tokens = tokenize(&source);
+    let tokens = match tokenize(&source) {
+        Ok(t) => t,
+        Err(err) => {
+            print_error_message(&source, source_path, err.cursor, "Unknown token");
+            std::process::exit(1);
+        }
+    };
+
 
     if verbose {
         println!("After tokenization:");
@@ -1267,24 +1295,8 @@ fn main() {
     let program = match parse(&tokens) {
         Ok(prog) => prog,
         Err(err) => {
-            let mut line_starts = Vec::new();
-            line_starts.push(0 as usize);
-
-            for m in source.match_indices('\n') {
-                let (idx,_) = m;
-                line_starts.push(idx + 1);
-            }
-
-            line_starts.push(source.len()); // put the end of file last
-
-            let row = line_starts.iter().rposition(|ls| ls <= &err.cursor).unwrap();
-            let col = err.cursor - line_starts[row];
-            let rowstart = line_starts[row];
-            let rowend = line_starts[row + 1];
-
-            println!("{}:{}:{}:ParseError: {}", source_path.display(), row, col, err.message);
-            println!("{}", &source[rowstart..rowend]);
-            println!("{:<1$}^", "", col);
+            let error_message = format!("ParseError: {}", err.message);
+            print_error_message(&source, &source_path, err.cursor, &error_message);
             std::process::exit(1);
         }
     };
