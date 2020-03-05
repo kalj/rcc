@@ -208,10 +208,8 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     ];
 
     for t in toktypes.iter() {
-        let re = Regex::new(&get_token_pattern(t)).expect(&format!(
-            "Failed building regex object for token type {:?}",
-            t
-        ));
+        let re =
+            Regex::new(&get_token_pattern(t)).expect(&format!("Failed building regex object for token type {:?}", t));
         if let Some(captures) = re.captures(&source[cursor..]) {
             return match t {
                 Token::Identifier(_) => {
@@ -240,11 +238,7 @@ struct TokNLoc {
 
 impl TokNLoc {
     fn new(tok: Token, loc: usize, len: usize) -> TokNLoc {
-        TokNLoc {
-            token: tok,
-            location: loc,
-            length: len,
-        }
+        TokNLoc { token: tok, location: loc, length: len }
     }
 }
 
@@ -440,7 +434,7 @@ impl error::Error for ParseError {
     }
 }
 
-fn parse_postfix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_postfix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let tok = tokiter.next().unwrap();
     match &tok.token {
         Token::Lparen => {
@@ -476,7 +470,7 @@ fn parse_postfix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Ex
     }
 }
 
-fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let tok = tokiter.peek().unwrap();
     match &tok.token {
         Token::Minus => {
@@ -504,7 +498,12 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
             if let Expression::Variable(id) = operand {
                 Ok(Expression::PrefixOp(FixOp::Inc, id))
             } else {
-                Err(ParseError{cursor:next_loc, message:format!("Invalid prefix expression. Expected variable identifier after prefix increment/decrement")})
+                Err(ParseError {
+                    cursor: next_loc,
+                    message: format!(
+                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
+                    ),
+                })
             }
         }
         Token::Decrement => {
@@ -517,7 +516,12 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
             if let Expression::Variable(id) = operand {
                 Ok(Expression::PrefixOp(FixOp::Dec, id))
             } else {
-                Err(ParseError{cursor:next_loc, message:format!("Invalid prefix expression. Expected variable identifier after prefix increment/decrement")})
+                Err(ParseError {
+                    cursor: next_loc,
+                    message: format!(
+                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
+                    ),
+                })
             }
         }
         _ => {
@@ -527,7 +531,7 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
     }
 }
 
-fn parse_multiplicative_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_multiplicative_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut factor = parse_prefix_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
@@ -549,8 +553,7 @@ fn parse_multiplicative_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Re
     return Ok(factor);
 }
 
-fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
-
+fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut term = parse_multiplicative_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
@@ -571,7 +574,7 @@ fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<E
     return Ok(term);
 }
 
-fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut adexpr = parse_additive_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
@@ -592,7 +595,7 @@ fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expr
     return Ok(adexpr);
 }
 
-fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut shiftexpr = parse_shift_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
@@ -616,7 +619,7 @@ fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result
     return Ok(shiftexpr);
 }
 
-fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut relexpr = parse_relational_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
@@ -637,18 +640,14 @@ fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<E
     return Ok(relexpr);
 }
 
-fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut eqexpr = parse_equality_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         if let Token::BitwiseAnd = tok.token {
             tokiter.next(); // consume
             let next_eqexpr = parse_equality_expression(tokiter)?;
-            eqexpr = Expression::BinaryOp(
-                BinaryOp::BitwiseAnd,
-                Box::new(eqexpr),
-                Box::new(next_eqexpr),
-            );
+            eqexpr = Expression::BinaryOp(BinaryOp::BitwiseAnd, Box::new(eqexpr), Box::new(next_eqexpr));
         } else {
             break;
         }
@@ -657,18 +656,14 @@ fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Resul
     return Ok(eqexpr);
 }
 
-fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut bandexpr = parse_bitwise_and_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         if let Token::BitwiseXor = tok.token {
             tokiter.next(); // consume
             let next_bandexpr = parse_bitwise_and_expression(tokiter)?;
-            bandexpr = Expression::BinaryOp(
-                BinaryOp::BitwiseXor,
-                Box::new(bandexpr),
-                Box::new(next_bandexpr),
-            );
+            bandexpr = Expression::BinaryOp(BinaryOp::BitwiseXor, Box::new(bandexpr), Box::new(next_bandexpr));
         } else {
             break;
         }
@@ -677,18 +672,14 @@ fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Resul
     return Ok(bandexpr);
 }
 
-fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut bxorexpr = parse_bitwise_xor_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         if let Token::BitwiseOr = tok.token {
             tokiter.next(); // consume
             let next_bxorexpr = parse_bitwise_xor_expression(tokiter)?;
-            bxorexpr = Expression::BinaryOp(
-                BinaryOp::BitwiseOr,
-                Box::new(bxorexpr),
-                Box::new(next_bxorexpr),
-            );
+            bxorexpr = Expression::BinaryOp(BinaryOp::BitwiseOr, Box::new(bxorexpr), Box::new(next_bxorexpr));
         } else {
             break;
         }
@@ -697,18 +688,14 @@ fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result
     return Ok(bxorexpr);
 }
 
-fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
+fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut borexpr = parse_bitwise_or_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         if let Token::LogicalAnd = tok.token {
             tokiter.next(); // consume
             let next_borexpr = parse_bitwise_or_expression(tokiter)?;
-            borexpr = Expression::BinaryOp(
-                BinaryOp::LogicalAnd,
-                Box::new(borexpr),
-                Box::new(next_borexpr),
-            );
+            borexpr = Expression::BinaryOp(BinaryOp::LogicalAnd, Box::new(borexpr), Box::new(next_borexpr));
         } else {
             break;
         }
@@ -717,16 +704,14 @@ fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Resul
     return Ok(borexpr);
 }
 
-fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression,ParseError> {
-
+fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     let mut laexpr = parse_logical_and_expression(tokiter)?;
 
     while let Some(tok) = tokiter.peek() {
         if let Token::LogicalOr = tok.token {
             tokiter.next(); // consume
             let next_laexpr = parse_logical_and_expression(tokiter)?;
-            laexpr =
-                Expression::BinaryOp(BinaryOp::LogicalOr, Box::new(laexpr), Box::new(next_laexpr));
+            laexpr = Expression::BinaryOp(BinaryOp::LogicalOr, Box::new(laexpr), Box::new(next_laexpr));
         } else {
             break;
         }
@@ -782,10 +767,7 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, 
                 _ => {
                     return Err(ParseError {
                         cursor: tok.location,
-                        message: format!(
-                            "Invalid declaration statement. Expected an identifier, got '{}'.",
-                            tok.token
-                        ),
+                        message: format!("Invalid declaration statement. Expected an identifier, got '{}'.", tok.token),
                     })
                 }
             };
@@ -814,9 +796,12 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, 
 
     // ensure last token is a semicolon
     let tok = tokiter.next().unwrap();
-    if let Token::Semicolon = tok.token {}
-    else {
-        return Err(ParseError{cursor:tok.location, message:format!("Invalid statement. Expected a final semicolon, got '{}'.", tok.token)});
+    if let Token::Semicolon = tok.token {
+    } else {
+        return Err(ParseError {
+            cursor: tok.location,
+            message: format!("Invalid statement. Expected a final semicolon, got '{}'.", tok.token),
+        });
     }
 
     return Ok(stmt);
@@ -826,8 +811,8 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
     // ensure first token is an Int keyword
     let mut tok = &tokiter.next().unwrap().token;
 
-    if let Token::Keyword(Keyword::Int) = tok {}
-    else {
+    if let Token::Keyword(Keyword::Int) = tok {
+    } else {
         panic!("Invalid function declaration. Expected return type, got '{}'.", tok);
     }
 
@@ -835,10 +820,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
     tok = &tokiter.next().unwrap().token;
     let function_name = match tok {
         Token::Identifier(ident) => ident,
-        _ => panic!(
-            "Invalid function declaration. Expected identifier, got '{}'.",
-            tok
-        ),
+        _ => panic!("Invalid function declaration. Expected identifier, got '{}'.", tok),
     };
 
     // ensure next token is '('
@@ -857,8 +839,8 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
 
     // ensure next token is '{'
     tok = &tokiter.next().unwrap().token;
-    if let Token::Lbrace = tok {}
-    else {
+    if let Token::Lbrace = tok {
+    } else {
         panic!("Invalid function declaration. Expected '{{', got '{}'.", tok);
     }
 
@@ -940,9 +922,7 @@ impl Code {
                 CodeLine::LabelRef(lbl) => format!("{}:", lbl),
                 CodeLine::Instr1(opcode) => format!("    {}", opcode),
                 CodeLine::Instr2(opcode, operand) => format!("    {} {}", opcode, operand),
-                CodeLine::Instr3(opcode, operand1, operand2) => {
-                    format!("    {} {}, {}", opcode, operand1, operand2)
-                }
+                CodeLine::Instr3(opcode, operand1, operand2) => format!("    {} {}, {}", opcode, operand1, operand2),
             })
             .collect();
         return strs.join("\n") + "\n";
@@ -1087,7 +1067,7 @@ impl Generator {
             }
             Expression::Variable(id) => {
                 let var_offset = self.var_map[id];
-                code.push(CodeLine::i3("mov",&format!("{}({})", var_offset, self.regbp), &self.rega));
+                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2) => {
                 // setup labels
@@ -1155,24 +1135,20 @@ impl Generator {
                 }
             }
             Expression::PrefixOp(fixop, id) => {
-
                 let var_offset = self.var_map[id];
                 if let FixOp::Inc = fixop {
                     code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
-                }
-                else {
+                } else {
                     code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
                 }
-                code.push(CodeLine::i3("mov",&format!("{}({})", var_offset, self.regbp), &self.rega));
+                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::PostfixOp(fixop, id) => {
-
                 let var_offset = self.var_map[id];
-                code.push(CodeLine::i3("mov",&format!("{}({})", var_offset, self.regbp), &self.rega));
+                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
                 if let FixOp::Inc = fixop {
                     code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
-                }
-                else {
+                } else {
                     code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
                 }
             }
@@ -1225,13 +1201,7 @@ impl Generator {
             code.append(self.generate_statement_code(stmt));
         }
 
-        if !code.code.iter().any(|cl| {
-            if let CodeLine::Instr1(op) = cl {
-                op == "ret"
-            } else {
-                false
-            }
-        }) {
+        if !code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
             code.append(self.generate_statement_code(Statement::Return(Expression::Constant(0))));
         }
         return code;
@@ -1246,11 +1216,7 @@ impl Generator {
 
 fn main() {
     let matches = App::new("c-compiler")
-        .arg(
-            Arg::with_name("INPUT")
-                .help("The source file to compile")
-                .required(true),
-        )
+        .arg(Arg::with_name("INPUT").help("The source file to compile").required(true))
         .arg(
             Arg::with_name("output")
                 .short("o")
@@ -1265,12 +1231,7 @@ fn main() {
                 .default_value("64")
                 .help("Specify 32 or 64 bit code generation."),
         )
-        .arg(
-            Arg::with_name("verbose")
-                .short("v")
-                .long("verbose")
-                .help("Enable verbose output"),
-        )
+        .arg(Arg::with_name("verbose").short("v").long("verbose").help("Enable verbose output"))
         .get_matches();
 
     let source_filename = matches.value_of("INPUT").unwrap();
@@ -1293,11 +1254,7 @@ fn main() {
     };
 
     if verbose {
-        println!(
-            "Compiling {} -> {}...",
-            source_path.display(),
-            output_path.display()
-        );
+        println!("Compiling {} -> {}...", source_path.display(), output_path.display());
     }
 
     let source = fs::read_to_string(source_path).expect("Failed reading source file");
@@ -1327,15 +1284,12 @@ fn main() {
 
             line_starts.push(source.len()); // put the end of file last
 
-            let row = line_starts
-                .iter()
-                .rposition(|ls| ls <= &err.cursor)
-                .unwrap();
+            let row = line_starts.iter().rposition(|ls| ls <= &err.cursor).unwrap();
             let col = err.cursor - line_starts[row];
             let rowstart = line_starts[row];
             let rowend = line_starts[row + 1];
 
-            println!("{}:{}:{}:ParseError: {}",source_path.display(), row, col, err.message);
+            println!("{}:{}:{}:ParseError: {}", source_path.display(), row, col, err.message);
             println!("{}", &source[rowstart..rowend]);
             println!("{:<1$}^", "", col);
             std::process::exit(1);
