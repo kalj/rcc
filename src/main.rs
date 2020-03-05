@@ -66,7 +66,7 @@ enum Token {
     IntLiteral(i64),
 }
 
-fn keyword_to_str(kw: &Keyword) -> String {
+fn keyword_to_str(kw: Keyword) -> String {
     match kw {
         Keyword::Int => "int".to_string(),
         Keyword::Return => "return".to_string(),
@@ -113,7 +113,7 @@ fn token_to_str(tok: &Token) -> String {
         Token::RightShiftAssignment => ">>=".to_string(),
         Token::Increment => "++".to_string(),
         Token::Decrement => "--".to_string(),
-        Token::Keyword(kw) => keyword_to_str(kw),
+        Token::Keyword(kw) => keyword_to_str(*kw),
         Token::Identifier(ident) => ident.to_string(),
         Token::IntLiteral(val) => val.to_string(),
     }
@@ -131,7 +131,7 @@ fn token_length(tok: &Token) -> usize {
 
 fn get_token_pattern(tok: &Token) -> String {
     match tok {
-        Token::Keyword(kw) => format!(r"^{}\W", keyword_to_str(kw)),
+        Token::Keyword(kw) => format!(r"^{}\W", keyword_to_str(*kw)),
         Token::Identifier(_) => r"^([a-zA-Z]\w*)".to_string(),
         Token::IntLiteral(_) => r"^([0-9]+)".to_string(),
         _ => format!("^{}", regex::escape(&token_to_str(tok))),
@@ -209,7 +209,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
 
     for t in toktypes.iter() {
         let re =
-            Regex::new(&get_token_pattern(t)).expect(&format!("Failed building regex object for token type {:?}", t));
+            Regex::new(&get_token_pattern(t)).unwrap_or_else(|_| panic!("Failed building regex object for token type {:?}", t));
         if let Some(captures) = re.captures(&source[cursor..]) {
             return match t {
                 Token::Identifier(_) => {
@@ -227,7 +227,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
             };
         }
     }
-    return Err(TokenError { cursor: cursor });
+    Err(TokenError { cursor })
 }
 
 struct TokNLoc {
@@ -500,9 +500,7 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
             } else {
                 Err(ParseError {
                     cursor: next_loc,
-                    message: format!(
-                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
-                    ),
+                    message: "Invalid prefix expression. Expected variable identifier after prefix increment/decrement".to_string(),
                 })
             }
         }
@@ -518,9 +516,7 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
             } else {
                 Err(ParseError {
                     cursor: next_loc,
-                    message: format!(
-                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
-                    ),
+                    message: "Invalid prefix expression. Expected variable identifier after prefix increment/decrement".to_string(),
                 })
             }
         }
@@ -550,7 +546,7 @@ fn parse_multiplicative_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Re
         }
     }
     tokiter.reset_peek();
-    return Ok(factor);
+    Ok(factor)
 }
 
 fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -571,7 +567,7 @@ fn parse_additive_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<E
         }
     }
     tokiter.reset_peek();
-    return Ok(term);
+    Ok(term)
 }
 
 fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -592,7 +588,7 @@ fn parse_shift_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expr
         }
     }
     tokiter.reset_peek();
-    return Ok(adexpr);
+    Ok(adexpr)
 }
 
 fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -616,7 +612,7 @@ fn parse_relational_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result
     }
 
     tokiter.reset_peek();
-    return Ok(shiftexpr);
+    Ok(shiftexpr)
 }
 
 fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -637,7 +633,7 @@ fn parse_equality_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<E
         }
     }
     tokiter.reset_peek();
-    return Ok(relexpr);
+    Ok(relexpr)
 }
 
 fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -653,7 +649,7 @@ fn parse_bitwise_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Resul
         }
     }
     tokiter.reset_peek();
-    return Ok(eqexpr);
+    Ok(eqexpr)
 }
 
 fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -669,7 +665,7 @@ fn parse_bitwise_xor_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Resul
         }
     }
     tokiter.reset_peek();
-    return Ok(bandexpr);
+    Ok(bandexpr)
 }
 
 fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -685,7 +681,7 @@ fn parse_bitwise_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result
         }
     }
     tokiter.reset_peek();
-    return Ok(bxorexpr);
+    Ok(bxorexpr)
 }
 
 fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -701,7 +697,7 @@ fn parse_logical_and_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Resul
         }
     }
     tokiter.reset_peek();
-    return Ok(borexpr);
+    Ok(borexpr)
 }
 
 fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
@@ -717,39 +713,36 @@ fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result
         }
     }
     tokiter.reset_peek();
-    return Ok(laexpr);
+    Ok(laexpr)
 }
 
 fn parse_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
-    match &tokiter.peek().unwrap().token {
-        Token::Identifier(id) => {
-            let ass = match tokiter.peek().unwrap().token {
-                Token::Assignment => Some(AssignmentKind::Write),
-                Token::AdditionAssignment => Some(AssignmentKind::Add),
-                Token::SubtractionAssignment => Some(AssignmentKind::Subtract),
-                Token::MultiplicationAssignment => Some(AssignmentKind::Multiply),
-                Token::DivisionAssignment => Some(AssignmentKind::Divide),
-                Token::RemainderAssignment => Some(AssignmentKind::Remainder),
-                Token::BitwiseXorAssignment => Some(AssignmentKind::BitwiseXor),
-                Token::BitwiseOrAssignment => Some(AssignmentKind::BitwiseOr),
-                Token::BitwiseAndAssignment => Some(AssignmentKind::BitwiseAnd),
-                Token::LeftShiftAssignment => Some(AssignmentKind::LeftShift),
-                Token::RightShiftAssignment => Some(AssignmentKind::RightShift),
-                _ => None,
-            };
+    if let Token::Identifier(id) = &tokiter.peek().unwrap().token {
+        let ass = match tokiter.peek().unwrap().token {
+            Token::Assignment => Some(AssignmentKind::Write),
+            Token::AdditionAssignment => Some(AssignmentKind::Add),
+            Token::SubtractionAssignment => Some(AssignmentKind::Subtract),
+            Token::MultiplicationAssignment => Some(AssignmentKind::Multiply),
+            Token::DivisionAssignment => Some(AssignmentKind::Divide),
+            Token::RemainderAssignment => Some(AssignmentKind::Remainder),
+            Token::BitwiseXorAssignment => Some(AssignmentKind::BitwiseXor),
+            Token::BitwiseOrAssignment => Some(AssignmentKind::BitwiseOr),
+            Token::BitwiseAndAssignment => Some(AssignmentKind::BitwiseAnd),
+            Token::LeftShiftAssignment => Some(AssignmentKind::LeftShift),
+            Token::RightShiftAssignment => Some(AssignmentKind::RightShift),
+            _ => None,
+        };
 
-            if let Some(asskind) = ass {
-                tokiter.next(); // consume twice
-                tokiter.next();
-                let expr = parse_expression(tokiter)?;
-                return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr)));
-            }
+        if let Some(asskind) = ass {
+            tokiter.next(); // consume twice
+            tokiter.next();
+            let expr = parse_expression(tokiter)?;
+            return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr)));
         }
-        _ => (),
     }
 
     tokiter.reset_peek();
-    return parse_logical_or_expression(tokiter);
+    parse_logical_or_expression(tokiter)
 }
 
 fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, ParseError> {
@@ -804,7 +797,7 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, 
         });
     }
 
-    return Ok(stmt);
+    Ok(stmt)
 }
 
 fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, ParseError> {
@@ -856,16 +849,16 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
         statements.push(parse_statement(tokiter)?);
     }
 
-    return Ok(Function::Func(function_name.to_string(), statements));
+    Ok(Function::Func(function_name.to_string(), statements))
 }
 
 fn parse_program(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Program, ParseError> {
-    return Ok(Program::Prog(parse_function(tokiter)?));
+    Ok(Program::Prog(parse_function(tokiter)?))
 }
 
 fn parse(tokens: &[TokNLoc]) -> Result<Program, ParseError> {
     let mut tokiter = itertools::multipeek(tokens.iter());
-    return parse_program(&mut tokiter);
+    parse_program(&mut tokiter)
 }
 
 //===================================================================
@@ -925,7 +918,7 @@ impl Code {
                 CodeLine::Instr3(opcode, operand1, operand2) => format!("    {} {}, {}", opcode, operand1, operand2),
             })
             .collect();
-        return strs.join("\n") + "\n";
+        strs.join("\n") + "\n"
     }
 }
 
@@ -948,7 +941,7 @@ impl Generator {
     fn new(emit_32bit: bool) -> Generator {
         let bytes_per_reg = if emit_32bit { 4 } else { 8 };
         Generator {
-            emit_32bit: emit_32bit,
+            emit_32bit,
             label_counter: 0,
             rega: (if emit_32bit { "%eax" } else { "%rax" }).to_string(),
             regc: (if emit_32bit { "%ecx" } else { "%rcx" }).to_string(),
@@ -957,7 +950,7 @@ impl Generator {
             rega32: "%eax".to_string(),
             regc32: "%ecx".to_string(),
             regd32: "%edx".to_string(),
-            bytes_per_reg: bytes_per_reg,
+            bytes_per_reg,
             var_map: HashMap::new(),
             var_stack_index: -(bytes_per_reg as i32),
         }
@@ -1033,7 +1026,7 @@ impl Generator {
             }
         }
 
-        return code;
+        code
     }
 
     fn generate_expression_code(&mut self, expr: &Expression) -> Code {
@@ -1157,7 +1150,7 @@ impl Generator {
                 code.push(CodeLine::i3("mov", &literal, &self.rega32));
             }
         }
-        return code;
+        code
     }
 
     fn generate_statement_code(&mut self, stmnt: Statement) -> Code {
@@ -1186,7 +1179,7 @@ impl Generator {
                 code = self.generate_expression_code(&expr);
             }
         }
-        return code;
+        code
     }
 
     fn generate_function_code(&mut self, func: Function) -> Code {
@@ -1204,13 +1197,12 @@ impl Generator {
         if !code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
             code.append(self.generate_statement_code(Statement::Return(Expression::Constant(0))));
         }
-        return code;
+        code
     }
 
     fn generate_program_code(&mut self, prog: Program) -> Code {
         let Program::Prog(func) = prog;
-        let code = self.generate_function_code(func);
-        return code;
+        self.generate_function_code(func)
     }
 }
 
@@ -1277,9 +1269,10 @@ fn main() {
         Err(err) => {
             let mut line_starts = Vec::new();
             line_starts.push(0 as usize);
-            let re = Regex::new(r"\n").unwrap();
-            for m in re.find_iter(&source) {
-                line_starts.push(m.start() + 1);
+
+            for m in source.match_indices('\n') {
+                let (idx,_) = m;
+                line_starts.push(idx + 1);
             }
 
             line_starts.push(source.len()); // put the end of file last
