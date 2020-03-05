@@ -475,17 +475,17 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
     match &tok.token {
         Token::Minus => {
             tokiter.next(); // consume
-            let operand = parse_postfix_expression(tokiter)?;
+            let operand = parse_prefix_expression(tokiter)?;
             Ok(Expression::UnaryOp(UnaryOp::Negate, Box::new(operand)))
         }
         Token::Not => {
             tokiter.next(); // consume
-            let operand = parse_postfix_expression(tokiter)?;
+            let operand = parse_prefix_expression(tokiter)?;
             Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(operand)))
         }
         Token::Complement => {
             tokiter.next(); // consume
-            let operand = parse_postfix_expression(tokiter)?;
+            let operand = parse_prefix_expression(tokiter)?;
             Ok(Expression::UnaryOp(UnaryOp::Complement, Box::new(operand)))
         }
         Token::Increment => {
