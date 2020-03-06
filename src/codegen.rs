@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::parser::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::parser::{BlockItem, Expression, Function, Program, Statement};
+use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
+use crate::ast::{BlockItem, Expression, Function, Program, Statement};
 
 //===================================================================
 // Code generation

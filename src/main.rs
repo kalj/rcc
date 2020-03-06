@@ -6,11 +6,15 @@ use std::path::{Path, PathBuf};
 mod tokenizer;
 use tokenizer::tokenize;
 
+mod ast;
+use ast::print_program;
+
 mod parser;
-use parser::{parse, print_program};
+use parser::parse;
 
 mod codegen;
 use codegen::Generator;
+
 
 fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &str) {
     let mut line_starts = Vec::new();
