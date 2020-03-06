@@ -17,7 +17,7 @@ fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &st
     line_starts.push(0 as usize);
 
     for m in source.match_indices('\n') {
-        let (idx,_) = m;
+        let (idx, _) = m;
         line_starts.push(idx + 1);
     }
 
@@ -90,7 +90,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-
 
     if verbose {
         println!("After tokenization:");

@@ -1,9 +1,9 @@
 extern crate itertools;
+use crate::tokenizer::{Keyword, TokNLoc, Token};
 use core::slice::Iter;
 use itertools::MultiPeek;
-use std::fmt;
 use std::error;
-use crate::tokenizer::{Keyword, Token, TokNLoc};
+use std::fmt;
 
 #[derive(Debug)]
 pub enum BinaryOp {
@@ -240,7 +240,8 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
             } else {
                 Err(ParseError {
                     cursor: next_loc,
-                    message: "Invalid prefix expression. Expected variable identifier after prefix increment/decrement".to_string(),
+                    message: "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
+                        .to_string(),
                 })
             }
         }
@@ -256,7 +257,8 @@ fn parse_prefix_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Exp
             } else {
                 Err(ParseError {
                     cursor: next_loc,
-                    message: "Invalid prefix expression. Expected variable identifier after prefix increment/decrement".to_string(),
+                    message: "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
+                        .to_string(),
                 })
             }
         }

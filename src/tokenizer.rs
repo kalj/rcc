@@ -1,6 +1,6 @@
 extern crate regex;
-use std::error;
 use regex::Regex;
+use std::error;
 use std::fmt;
 
 //===================================================================
@@ -200,8 +200,8 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     ];
 
     for t in toktypes.iter() {
-        let re =
-            Regex::new(&get_token_pattern(t)).unwrap_or_else(|_| panic!("Failed building regex object for token type {:?}", t));
+        let re = Regex::new(&get_token_pattern(t))
+            .unwrap_or_else(|_| panic!("Failed building regex object for token type {:?}", t));
         if let Some(captures) = re.captures(&source[cursor..]) {
             return match t {
                 Token::Identifier(_) => {
@@ -234,7 +234,7 @@ impl TokNLoc {
     }
 }
 
-pub fn tokenize(source: &str) -> Result<Vec<TokNLoc>,TokenError> {
+pub fn tokenize(source: &str) -> Result<Vec<TokNLoc>, TokenError> {
     let mut result = Vec::new();
 
     let len = source.len();
