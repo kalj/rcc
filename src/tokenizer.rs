@@ -11,6 +11,8 @@ use std::fmt;
 pub enum Keyword {
     Int,
     Return,
+    If,
+    Else,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +30,8 @@ pub enum Token {
     Minus,
     Not,
     Complement,
+    QuestionMark,
+    Colon,
     LogicalAnd,
     LogicalOr,
     Equal,
@@ -60,9 +64,12 @@ pub enum Token {
 
 fn keyword_to_str(kw: Keyword) -> String {
     match kw {
-        Keyword::Int => "int".to_string(),
-        Keyword::Return => "return".to_string(),
+        Keyword::Int => "int",
+        Keyword::Return => "return",
+        Keyword::If => "if",
+        Keyword::Else => "else",
     }
+    .to_string()
 }
 
 fn token_to_str(tok: &Token) -> String {
@@ -80,6 +87,8 @@ fn token_to_str(tok: &Token) -> String {
         Token::Minus => "-".to_string(),
         Token::Not => "!".to_string(),
         Token::Complement => "~".to_string(),
+        Token::QuestionMark => "?".to_string(),
+        Token::Colon => ":".to_string(),
         Token::LogicalAnd => "&&".to_string(),
         Token::LogicalOr => "||".to_string(),
         Token::Equal => "==".to_string(),
@@ -192,9 +201,13 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Not,
         Token::Complement,
         Token::Assignment,
+        Token::QuestionMark,
+        Token::Colon,
         // generic patterns
         Token::Keyword(Keyword::Int),
         Token::Keyword(Keyword::Return),
+        Token::Keyword(Keyword::If),
+        Token::Keyword(Keyword::Else),
         Token::Identifier("a".to_string()), // with placeholder
         Token::IntLiteral(1),               // with placeholder
     ];

@@ -64,18 +64,25 @@ pub enum Expression {
     PostfixOp(FixOp, String),
     Constant(i64),
     Variable(String),
+    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
 }
 
 #[derive(Debug)]
 pub enum Statement {
     Return(Expression),
-    Decl(String, Option<Expression>),
     Expr(Expression),
+    If(Expression, Box<Statement>, Option<Box<Statement>>),
+}
+
+#[derive(Debug)]
+pub enum BlockItem {
+    Stmt(Statement),
+    Decl(String, Option<Expression>),
 }
 
 #[derive(Debug)]
 pub enum Function {
-    Func(String, Vec<Statement>),
+    Func(String, Vec<BlockItem>),
 }
 
 #[derive(Debug)]
@@ -113,6 +120,13 @@ fn print_expression(expr: &Expression, lvl: i32) {
         Expression::Constant(val) => {
             println!("{0:<1$}Constant {2}", "", (lvl * 2) as usize, val);
         }
+        Expression::Conditional(condexpr, ifexpr, elseexpr) => {
+            println!("{:<1$}Conditional {{", "", (lvl * 2) as usize);
+            print_expression(condexpr, lvl + 1);
+            print_expression(ifexpr, lvl + 1);
+            print_expression(elseexpr, lvl + 1);
+            println!("{:<1$}}}", "", (lvl * 2) as usize);
+        }
     }
 }
 
@@ -123,7 +137,33 @@ fn print_statement(stmt: &Statement, lvl: i32) {
             print_expression(expr, lvl + 1);
             println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
-        Statement::Decl(id, init) => {
+        Statement::Expr(expr) => {
+            println!("{: <1$}Expr {{", "", (lvl * 2) as usize);
+            print_expression(expr, lvl + 1);
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+        Statement::If(cond, if_stmt, else_stmt) => {
+            println!("{: <1$}If {{", "", (lvl * 2) as usize);
+            print_expression(cond, lvl + 1);
+            print_statement(if_stmt, lvl + 1);
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+            if let Some(stmt) = else_stmt {
+                println!("{: <1$}Else {{", "", (lvl * 2) as usize);
+                print_statement(stmt, lvl + 1);
+                println!("{: <1$}}}", "", (lvl * 2) as usize);
+            }
+        }
+    }
+}
+
+fn print_block_item(bkitem: &BlockItem, lvl: i32) {
+    match bkitem {
+        BlockItem::Stmt(stmt) => {
+            println!("{: <1$}Statement {{", "", (lvl * 2) as usize);
+            print_statement(stmt, lvl + 1);
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+        BlockItem::Decl(id, init) => {
             if let Some(expr) = init {
                 println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id);
                 print_expression(expr, lvl + 1);
@@ -132,21 +172,16 @@ fn print_statement(stmt: &Statement, lvl: i32) {
                 println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id);
             }
         }
-        Statement::Expr(expr) => {
-            println!("{: <1$}Expr {{", "", (lvl * 2) as usize);
-            print_expression(expr, lvl + 1);
-            println!("{: <1$}}}", "", (lvl * 2) as usize);
-        }
     }
 }
 
 pub fn print_program(prog: &Program) {
     let lvl = 0;
     println!("Program {{");
-    let Program::Prog(Function::Func(name, stmts)) = prog;
+    let Program::Prog(Function::Func(name, bkitems)) = prog;
     println!("  Function \"{}\" {{", name);
-    for stmt in stmts {
-        print_statement(stmt, lvl + 2);
+    for bkitem in bkitems {
+        print_block_item(bkitem, lvl + 2);
     }
     println!("  }}");
     println!("}}");
@@ -160,6 +195,12 @@ pub fn print_program(prog: &Program) {
 pub struct ParseError {
     pub cursor: usize,
     pub message: String,
+}
+
+impl ParseError {
+    fn new(cursor: usize, message: String) -> ParseError {
+        ParseError { cursor, message }
+    }
 }
 
 impl fmt::Display for ParseError {
@@ -458,6 +499,32 @@ fn parse_logical_or_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result
     Ok(laexpr)
 }
 
+fn parse_conditional_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
+    let loexpr = parse_logical_or_expression(tokiter)?;
+
+    if let Token::QuestionMark = &tokiter.peek().unwrap().token {
+        tokiter.next(); // consume
+
+        let ifexpr = parse_expression(tokiter)?;
+
+        let tok = tokiter.next().unwrap();
+        if let Token::Colon = tok.token {
+        } else {
+            return Err(ParseError::new(
+                tok.location,
+                format!("Invalid conditional expression. Expected a colon, got '{}'.", tok.token),
+            ));
+        }
+
+        let elseexpr = parse_conditional_expression(tokiter)?;
+
+        Ok(Expression::Conditional(Box::new(loexpr), Box::new(ifexpr), Box::new(elseexpr)))
+    } else {
+        tokiter.reset_peek();
+        Ok(loexpr)
+    }
+}
+
 fn parse_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression, ParseError> {
     if let Token::Identifier(id) = &tokiter.peek().unwrap().token {
         let ass = match tokiter.peek().unwrap().token {
@@ -484,15 +551,79 @@ fn parse_expression(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Expression
     }
 
     tokiter.reset_peek();
-    parse_logical_or_expression(tokiter)
+    parse_conditional_expression(tokiter)
+}
+
+fn ensure_semicolon(tokiter: &mut MultiPeek<Iter<TokNLoc>>, msg: &str) -> Result<(), ParseError> {
+    // ensure last token is a semicolon
+    let tok = tokiter.next().unwrap();
+    if let Token::Semicolon = tok.token {
+        Ok(())
+    } else {
+        Err(ParseError::new(tok.location, format!("{}. Expected a final semicolon, got '{}'.", msg, tok.token)))
+    }
 }
 
 fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, ParseError> {
     let stmt = match tokiter.peek().unwrap().token {
         Token::Keyword(Keyword::Return) => {
             tokiter.next(); // consume
-            Statement::Return(parse_expression(tokiter)?)
+            let expr = parse_expression(tokiter)?;
+            ensure_semicolon(tokiter, "Invalid return statement")?;
+            Statement::Return(expr)
         }
+        Token::Keyword(Keyword::If) => {
+            tokiter.next(); // consume
+
+            // ensure next token is '('
+            let mut tok = tokiter.next().unwrap();
+            if let Token::Lparen = tok.token {
+            } else {
+                return Err(ParseError::new(
+                    tok.location,
+                    format!("Invalid if statement. Expected '(', got '{}'.", tok.token),
+                ));
+            }
+
+            let cond_expr = parse_expression(tokiter)?;
+
+            // ensure next token is ')'
+            tok = tokiter.next().unwrap();
+            if let Token::Rparen = tok.token {
+            } else {
+                return Err(ParseError::new(
+                    tok.location,
+                    format!("Invalid if statement. Expected ')' after condition expression, got '{}'.", tok.token),
+                ));
+            }
+
+            let if_stmnt = parse_statement(tokiter)?;
+
+            if let Token::Keyword(Keyword::Else) = tokiter.peek().unwrap().token {
+                tokiter.next(); // consume
+
+                let else_stmnt = parse_statement(tokiter)?;
+
+                Statement::If(cond_expr, Box::new(if_stmnt), Some(Box::new(else_stmnt)))
+            } else {
+                tokiter.reset_peek();
+                Statement::If(cond_expr, Box::new(if_stmnt), None)
+            }
+        }
+        _ => {
+            tokiter.reset_peek();
+            // then we have an expression to parse
+            let expr = parse_expression(tokiter)?;
+            ensure_semicolon(tokiter, "Invalid expression statement")?;
+            Statement::Expr(expr)
+        }
+    };
+
+    Ok(stmt)
+}
+
+fn parse_block_item(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<BlockItem, ParseError> {
+    let bkitem = match tokiter.peek().unwrap().token {
         Token::Keyword(Keyword::Int) => {
             tokiter.next(); // consume
 
@@ -500,10 +631,10 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, 
             let id = match &tok.token {
                 Token::Identifier(n) => n,
                 _ => {
-                    return Err(ParseError {
-                        cursor: tok.location,
-                        message: format!("Invalid declaration statement. Expected an identifier, got '{}'.", tok.token),
-                    })
+                    return Err(ParseError::new(
+                        tok.location,
+                        format!("Invalid declaration. Expected an identifier, got '{}'.", tok.token),
+                    ));
                 }
             };
 
@@ -520,78 +651,78 @@ fn parse_statement(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Statement, 
                 }
             };
 
-            Statement::Decl(id.to_string(), init)
+            // ensure last token is a semicolon
+            ensure_semicolon(tokiter, "Invalid declaration")?;
+
+            BlockItem::Decl(id.to_string(), init)
         }
         _ => {
             tokiter.reset_peek();
             // then we have an expression to parse
-            Statement::Expr(parse_expression(tokiter)?)
+            BlockItem::Stmt(parse_statement(tokiter)?)
         }
     };
 
-    // ensure last token is a semicolon
-    let tok = tokiter.next().unwrap();
-    if let Token::Semicolon = tok.token {
-    } else {
-        return Err(ParseError {
-            cursor: tok.location,
-            message: format!("Invalid statement. Expected a final semicolon, got '{}'.", tok.token),
-        });
-    }
-
-    Ok(stmt)
+    Ok(bkitem)
 }
 
 fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, ParseError> {
     // ensure first token is an Int keyword
-    let mut tok = &tokiter.next().unwrap().token;
+    let mut tok = tokiter.next().unwrap();
 
-    if let Token::Keyword(Keyword::Int) = tok {
+    if let Token::Keyword(Keyword::Int) = tok.token {
     } else {
-        panic!("Invalid function declaration. Expected return type, got '{}'.", tok);
+        let msg = format!("Invalid function declaration. Expected return type, got '{}'.", tok.token);
+        return Err(ParseError::new(tok.location, msg));
     }
 
     // next token should be an identifier
-    tok = &tokiter.next().unwrap().token;
-    let function_name = match tok {
+    tok = tokiter.next().unwrap();
+    let function_name = match &tok.token {
         Token::Identifier(ident) => ident,
-        _ => panic!("Invalid function declaration. Expected identifier, got '{}'.", tok),
+        _ => {
+            let msg = format!("Invalid function declaration. Expected identifier, got '{}'.", tok.token);
+            return Err(ParseError::new(tok.location, msg));
+        }
     };
 
     // ensure next token is '('
-    tok = &tokiter.next().unwrap().token;
-    if let Token::Lparen = tok {
+    tok = tokiter.next().unwrap();
+    if let Token::Lparen = tok.token {
     } else {
-        panic!("Invalid function declaration. Expected '(', got '{}'.", tok);
+        let msg = format!("Invalid function declaration. Expected '(', got '{}'.", tok.token);
+        return Err(ParseError::new(tok.location, msg));
     }
 
     // ensure next token is ')'
-    tok = &tokiter.next().unwrap().token;
-    if let Token::Rparen = tok {
+    tok = tokiter.next().unwrap();
+    if let Token::Rparen = tok.token {
     } else {
-        panic!("Invalid function declaration. Expected ')', got '{}'.", tok);
+        let msg = format!("Invalid function declaration. Expected ')', got '{}'.", tok.token);
+        return Err(ParseError::new(tok.location, msg));
     }
 
     // ensure next token is '{'
-    tok = &tokiter.next().unwrap().token;
-    if let Token::Lbrace = tok {
+    tok = tokiter.next().unwrap();
+    if let Token::Lbrace = tok.token {
     } else {
-        panic!("Invalid function declaration. Expected '{{', got '{}'.", tok);
+        let msg = format!("Invalid function declaration. Expected '{{', got '{}'.", tok.token);
+        return Err(ParseError::new(tok.location, msg));
     }
 
     // parse statements
-    let mut statements = Vec::new();
+    let mut block_items = Vec::new();
 
     loop {
-        tok = &tokiter.peek().unwrap().token;
-        if let Token::Rbrace = tok {
+        tok = tokiter.peek().unwrap();
+        if let Token::Rbrace = tok.token {
             break;
         }
         tokiter.reset_peek();
-        statements.push(parse_statement(tokiter)?);
+        block_items.push(parse_block_item(tokiter)?);
     }
 
-    Ok(Function::Func(function_name.to_string(), statements))
+    Ok(Function::Func(function_name.to_string(), block_items))
 }
 
 fn parse_program(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Program, ParseError> {

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::parser::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::parser::{Expression, Function, Program, Statement};
+use crate::parser::{BlockItem, Expression, Function, Program, Statement};
 
 //===================================================================
 // Code generation
@@ -174,35 +174,29 @@ impl Generator {
     fn generate_expression_code(&mut self, expr: &Expression) -> Code {
         let mut code = Code::new();
         match expr {
-            Expression::Assign(kind, id, expr) => {
-                code = self.generate_expression_code(expr);
-                let var_offset = self.var_map[id];
-
-                let binop = match kind {
-                    AssignmentKind::Write => None,
-                    AssignmentKind::Add => Some(BinaryOp::Addition),
-                    AssignmentKind::Subtract => Some(BinaryOp::Subtraction),
-                    AssignmentKind::Multiply => Some(BinaryOp::Multiplication),
-                    AssignmentKind::Divide => Some(BinaryOp::Division),
-                    AssignmentKind::Remainder => Some(BinaryOp::Remainder),
-                    AssignmentKind::BitwiseOr => Some(BinaryOp::BitwiseOr),
-                    AssignmentKind::BitwiseXor => Some(BinaryOp::BitwiseXor),
-                    AssignmentKind::BitwiseAnd => Some(BinaryOp::BitwiseAnd),
-                    AssignmentKind::LeftShift => Some(BinaryOp::LeftShift),
-                    AssignmentKind::RightShift => Some(BinaryOp::RightShift),
-                };
-
-                if let Some(bop) = binop {
-                    code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
-                    code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
-                    code.append(self.generate_binop_code(&bop));
-                }
-
-                code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp)));
+            Expression::Constant(val) => {
+                let literal = format!("${}", val);
+                code.push(CodeLine::i3("mov", &literal, &self.rega32));
             }
             Expression::Variable(id) => {
                 let var_offset = self.var_map[id];
                 code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
+            }
+            Expression::UnaryOp(uop, expr) => {
+                code = self.generate_expression_code(expr);
+                match uop {
+                    UnaryOp::Negate => {
+                        code.push(CodeLine::i2("neg", &self.rega32));
+                    }
+                    UnaryOp::Not => {
+                        code.push(CodeLine::i3("cmp", "$0", &self.rega32));
+                        code.push(CodeLine::i3("mov", "$0", &self.rega32));
+                        code.push(CodeLine::i2("sete", "%al"));
+                    }
+                    UnaryOp::Complement => {
+                        code.push(CodeLine::i2("not", &self.rega32));
+                    }
+                }
             }
             Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2) => {
                 // setup labels
@@ -234,7 +228,7 @@ impl Generator {
                 // if false then just jump over second part and set false
                 // else evaluate second part and set to return status of that
                 code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("jne", &cond2)); //                           if ZF is not, go to cond2
+                code.push(CodeLine::i2("jne", &cond2)); //                           if ZF is not set, go to cond2
                 code.push(CodeLine::i2("jmp", &end)); //                             else we are done (and eax is 0), so jump to end.
                 code.push(CodeLine::lbl(&cond2));
                 code.append(self.generate_expression_code(e2));
@@ -252,22 +246,6 @@ impl Generator {
                 code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
                 code.push(CodeLine::i2("pop", &self.rega)); //                   get arg1 from stack into %eax
                 code.append(self.generate_binop_code(bop))
-            }
-            Expression::UnaryOp(uop, expr) => {
-                code = self.generate_expression_code(expr);
-                match uop {
-                    UnaryOp::Negate => {
-                        code.push(CodeLine::i2("neg", &self.rega32));
-                    }
-                    UnaryOp::Not => {
-                        code.push(CodeLine::i3("cmp", "$0", &self.rega32));
-                        code.push(CodeLine::i3("mov", "$0", &self.rega32));
-                        code.push(CodeLine::i2("sete", "%al"));
-                    }
-                    UnaryOp::Complement => {
-                        code.push(CodeLine::i2("not", &self.rega32));
-                    }
-                }
             }
             Expression::PrefixOp(fixop, id) => {
                 let var_offset = self.var_map[id];
@@ -287,24 +265,109 @@ impl Generator {
                     code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
                 }
             }
-            Expression::Constant(val) => {
-                let literal = format!("${}", val);
-                code.push(CodeLine::i3("mov", &literal, &self.rega32));
+            Expression::Assign(kind, id, expr) => {
+                code = self.generate_expression_code(expr);
+                let var_offset = self.var_map[id];
+
+                let binop = match kind {
+                    AssignmentKind::Write => None,
+                    AssignmentKind::Add => Some(BinaryOp::Addition),
+                    AssignmentKind::Subtract => Some(BinaryOp::Subtraction),
+                    AssignmentKind::Multiply => Some(BinaryOp::Multiplication),
+                    AssignmentKind::Divide => Some(BinaryOp::Division),
+                    AssignmentKind::Remainder => Some(BinaryOp::Remainder),
+                    AssignmentKind::BitwiseOr => Some(BinaryOp::BitwiseOr),
+                    AssignmentKind::BitwiseXor => Some(BinaryOp::BitwiseXor),
+                    AssignmentKind::BitwiseAnd => Some(BinaryOp::BitwiseAnd),
+                    AssignmentKind::LeftShift => Some(BinaryOp::LeftShift),
+                    AssignmentKind::RightShift => Some(BinaryOp::RightShift),
+                };
+
+                if let Some(bop) = binop {
+                    code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                    code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
+                    code.append(self.generate_binop_code(&bop));
+                }
+
+                code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp)));
+            }
+            Expression::Conditional(condexpr, ifexpr, elseexpr) => {
+                // setup labels
+                let else_case = format!("_label{}", self.label_counter);
+                let end = format!("_label{}", self.label_counter + 1);
+                self.label_counter += 2;
+
+                code = self.generate_expression_code(condexpr);
+
+                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                code.push(CodeLine::i2("je", &else_case)); //                        if ZF is not set, go to else_case
+
+                code.append(self.generate_expression_code(ifexpr)); //               else execute ifexpr
+                code.push(CodeLine::i2("jmp", &end)); //                             then jump to end
+
+                code.push(CodeLine::lbl(&else_case));
+                code.append(self.generate_expression_code(elseexpr));
+                code.push(CodeLine::lbl(&end));
             }
         }
         code
     }
 
-    fn generate_statement_code(&mut self, stmnt: Statement) -> Code {
-        let mut code = Code::new();
+    fn generate_statement_code(&mut self, stmnt: &Statement) -> Code {
         match stmnt {
             Statement::Return(expr) => {
-                code = self.generate_expression_code(&expr);
+                let mut code = self.generate_expression_code(&expr);
                 code.push(CodeLine::i3("mov", &self.regbp, &self.regsp));
                 code.push(CodeLine::i2("pop", &self.regbp));
                 code.push(CodeLine::i1("ret"));
+                code
             }
-            Statement::Decl(id, init) => {
+            Statement::Expr(expr) => self.generate_expression_code(&expr),
+            Statement::If(condexpr, ifstmt, maybe_elsestmt) => {
+                let mut code;
+
+                if let Some(elsestmt) = maybe_elsestmt {
+                    // setup labels
+                    let else_case = format!("_label{}", self.label_counter);
+                    self.label_counter += 1;
+                    let end = format!("_label{}", self.label_counter);
+                    self.label_counter += 1;
+
+                    code = self.generate_expression_code(&condexpr);
+
+                    code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                    code.push(CodeLine::i2("je", &else_case)); //                        if ZF is not set, go to else_case
+
+                    code.append(self.generate_statement_code(ifstmt)); //                else execute ifstmt
+                    code.push(CodeLine::i2("jmp", &end)); //                             then jump to end
+
+                    code.push(CodeLine::lbl(&else_case));
+                    code.append(self.generate_statement_code(elsestmt));
+                    code.push(CodeLine::lbl(&end));
+                } else {
+                    // setup label
+                    let end = format!("_label{}", self.label_counter);
+                    self.label_counter += 1;
+
+                    code = self.generate_expression_code(&condexpr);
+
+                    code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                    code.push(CodeLine::i2("je", &end)); //                              if ZF is not set, go to end
+
+                    code.append(self.generate_statement_code(ifstmt)); //                else execute ifexpr
+
+                    code.push(CodeLine::lbl(&end));
+                }
+
+                code
+            }
+        }
+    }
+
+    fn generate_block_item_code(&mut self, bkitem: BlockItem) -> Code {
+        let mut code = Code::new();
+        match bkitem {
+            BlockItem::Decl(id, init) => {
                 if self.var_map.contains_key(&id) {
                     panic!("Variable {} already declared", id);
                 }
@@ -317,10 +380,11 @@ impl Generator {
                 self.var_map.insert(id, self.var_stack_index); //      save name and stack offset
                 self.var_stack_index -= self.bytes_per_reg as i32; //  update stack index
             }
-            Statement::Expr(expr) => {
-                code = self.generate_expression_code(&expr);
+            BlockItem::Stmt(stmt) => {
+                code = self.generate_statement_code(&stmt);
             }
         }
+
         code
     }
 
@@ -332,12 +396,12 @@ impl Generator {
         code.push(CodeLine::lbl(&name));
         code.push(CodeLine::i2("push", &self.regbp));
         code.push(CodeLine::i3("mov", &self.regsp, &self.regbp));
-        for stmt in body {
-            code.append(self.generate_statement_code(stmt));
+        for bkitem in body {
+            code.append(self.generate_block_item_code(bkitem));
         }
 
         if !code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
-            code.append(self.generate_statement_code(Statement::Return(Expression::Constant(0))));
+            code.append(self.generate_statement_code(&Statement::Return(Expression::Constant(0))));
         }
         code
     }
