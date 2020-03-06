@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub enum BinaryOp {
     Addition,
@@ -62,10 +61,16 @@ pub enum Expression {
 }
 
 #[derive(Debug)]
+pub struct CompoundStatement {
+    pub block_items: Vec<BlockItem>,
+}
+
+#[derive(Debug)]
 pub enum Statement {
     Return(Expression),
     Expr(Expression),
     If(Expression, Box<Statement>, Option<Box<Statement>>),
+    Compound(CompoundStatement),
 }
 
 #[derive(Debug)]
@@ -76,7 +81,7 @@ pub enum BlockItem {
 
 #[derive(Debug)]
 pub enum Function {
-    Func(String, Vec<BlockItem>),
+    Func(String, CompoundStatement),
 }
 
 #[derive(Debug)]
@@ -124,6 +129,14 @@ fn print_expression(expr: &Expression, lvl: i32) {
     }
 }
 
+fn print_compound_statement(comp: &CompoundStatement, lvl: i32) {
+    println!("{: <1$}Compound {{", "", (lvl * 2) as usize);
+    for bkitem in &comp.block_items {
+        print_block_item(bkitem, lvl + 1);
+    }
+    println!("{: <1$}}}", "", (lvl * 2) as usize);
+}
+
 fn print_statement(stmt: &Statement, lvl: i32) {
     match stmt {
         Statement::Return(expr) => {
@@ -146,6 +159,9 @@ fn print_statement(stmt: &Statement, lvl: i32) {
                 print_statement(stmt, lvl + 1);
                 println!("{: <1$}}}", "", (lvl * 2) as usize);
             }
+        }
+        Statement::Compound(comp_stmt) => {
+            print_compound_statement(comp_stmt, lvl);
         }
     }
 }
@@ -172,11 +188,9 @@ fn print_block_item(bkitem: &BlockItem, lvl: i32) {
 pub fn print_program(prog: &Program) {
     let lvl = 0;
     println!("Program {{");
-    let Program::Prog(Function::Func(name, bkitems)) = prog;
+    let Program::Prog(Function::Func(name, comp_stmt)) = prog;
     println!("  Function \"{}\" {{", name);
-    for bkitem in bkitems {
-        print_block_item(bkitem, lvl + 2);
-    }
+    print_compound_statement(comp_stmt, lvl + 2);
     println!("  }}");
     println!("}}");
 }

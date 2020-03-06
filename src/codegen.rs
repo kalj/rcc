@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, CompoundStatement, Expression, Function, Program, Statement};
 
 //===================================================================
 // Code generation
@@ -361,24 +361,34 @@ impl Generator {
 
                 code
             }
+            Statement::Compound(comp) => self.generate_compound_statement(comp),
         }
     }
 
-    fn generate_block_item_code(&mut self, bkitem: BlockItem) -> Code {
+    fn generate_compound_statement(&mut self, comp: &CompoundStatement) -> Code {
+        let mut code = Code::new();
+        for bkitem in &comp.block_items {
+            code.append(self.generate_block_item_code(bkitem));
+        }
+
+        code
+    }
+
+    fn generate_block_item_code(&mut self, bkitem: &BlockItem) -> Code {
         let mut code = Code::new();
         match bkitem {
             BlockItem::Decl(id, init) => {
-                if self.var_map.contains_key(&id) {
+                if self.var_map.contains_key(id) {
                     panic!("Variable {} already declared", id);
                 }
                 if let Some(expr) = init {
-                    code = self.generate_expression_code(&expr); // possibly compute initial value, saved in %rax
+                    code = self.generate_expression_code(&expr); //            possibly compute initial value, saved in %rax
                 } else {
-                    code.push(CodeLine::i3("mov", "$0", &self.rega)); // otherwise initialize %rax with 0
+                    code.push(CodeLine::i3("mov", "$0", &self.rega)); //       otherwise initialize %rax with 0
                 }
-                code.push(CodeLine::i2("push", &self.rega)); //        push value on stack at known index
-                self.var_map.insert(id, self.var_stack_index); //      save name and stack offset
-                self.var_stack_index -= self.bytes_per_reg as i32; //  update stack index
+                code.push(CodeLine::i2("push", &self.rega)); //                push value on stack at known index
+                self.var_map.insert(id.to_string(), self.var_stack_index); //  save name and stack offset
+                self.var_stack_index -= self.bytes_per_reg as i32; //          update stack index
             }
             BlockItem::Stmt(stmt) => {
                 code = self.generate_statement_code(&stmt);
@@ -396,9 +406,7 @@ impl Generator {
         code.push(CodeLine::lbl(&name));
         code.push(CodeLine::i2("push", &self.regbp));
         code.push(CodeLine::i3("mov", &self.regsp, &self.regbp));
-        for bkitem in body {
-            code.append(self.generate_block_item_code(bkitem));
-        }
+        code.append(self.generate_compound_statement(&body));
 
         if !code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
             code.append(self.generate_statement_code(&Statement::Return(Expression::Constant(0))));

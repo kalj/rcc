@@ -6,7 +6,7 @@ use std::error;
 use std::fmt;
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, CompoundStatement, Expression, Function, Program, Statement};
 
 //===================================================================
 // Parsing
@@ -400,6 +400,33 @@ impl Parser<'_> {
         }
     }
 
+    fn parse_compound_statement(&mut self) -> Result<CompoundStatement, ParseError> {
+        // ensure next token is '{'
+        let tok = self.tokiter.next().unwrap();
+        if let Token::Lbrace = tok.token {
+        } else {
+            return Err(mkperr(tok, "Invalid compound statement. Expected '{{'"));
+        }
+
+        // parse block items
+        let mut block_items = Vec::new();
+
+        loop {
+            if let Token::Rbrace = self.tokiter.peek().unwrap().token {
+                break;
+            }
+            self.tokiter.reset_peek();
+            block_items.push(self.parse_block_item()?);
+        }
+
+        // we know next token is '}'
+        // simply consume
+        self.tokiter.next(); // consume
+                             // return Err(mkperr(tok, "Invalid compound statement. Expected '}}'"));
+
+        Ok(CompoundStatement { block_items })
+    }
+
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         let stmt = match self.tokiter.peek().unwrap().token {
             Token::Keyword(Keyword::Return) => {
@@ -439,6 +466,12 @@ impl Parser<'_> {
                     self.tokiter.reset_peek();
                     Statement::If(cond_expr, Box::new(if_stmnt), None)
                 }
+            }
+            Token::Lbrace => {
+                self.tokiter.reset_peek(); // let parse_compound_statement handle the brace
+
+                let comp = self.parse_compound_statement()?;
+                Statement::Compound(comp)
             }
             _ => {
                 self.tokiter.reset_peek();
@@ -525,29 +558,16 @@ impl Parser<'_> {
             return Err(mkperr(tok, "Invalid function definition. Expected ')'"));
         }
 
+        // parse body
+        let body = self.parse_compound_statement()?;
+
         // ensure next token is '{'
-        tok = self.tokiter.next().unwrap();
-        if let Token::Lbrace = tok.token {
-        } else {
-            let msg = format!("Invalid function definition. Expected '{{', got '{}'.", tok.token);
-            return Err(ParseError::new(tok.location, msg));
-        }
+        // return Err(mkperr(tok, "Invalid function definition. Expected '{{'"));
 
-        // parse statements
-        let mut block_items = Vec::new();
+        // // ensure next token is '}'
+        //     return Err(mkperr(tok, "Invalid function definition. Expected '}}'"));
 
-        loop {
-            tok = self.tokiter.peek().unwrap();
-            if let Token::Rbrace = tok.token {
-                break;
-            }
-            self.tokiter.reset_peek();
-            block_items.push(self.parse_block_item()?);
-        }
-
-        self.tokiter.next(); // consume the Rbrace
-
-        Ok(Function::Func(function_name.to_string(), block_items))
+        Ok(Function::Func(function_name.to_string(), body))
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
