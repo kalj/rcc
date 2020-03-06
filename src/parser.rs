@@ -493,7 +493,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
 
     if let Token::Keyword(Keyword::Int) = tok.token {
     } else {
-        let msg = format!("Invalid function declaration. Expected return type, got '{}'.", tok.token);
+        let msg = format!("Invalid function definition. Expected return type, got '{}'.", tok.token);
         return Err(ParseError::new(tok.location, msg));
     }
 
@@ -502,7 +502,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
     let function_name = match &tok.token {
         Token::Identifier(ident) => ident,
         _ => {
-            let msg = format!("Invalid function declaration. Expected identifier, got '{}'.", tok.token);
+            let msg = format!("Invalid function definition. Expected identifier, got '{}'.", tok.token);
             return Err(ParseError::new(tok.location, msg));
         }
     };
@@ -511,7 +511,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
     tok = tokiter.next().unwrap();
     if let Token::Lparen = tok.token {
     } else {
-        let msg = format!("Invalid function declaration. Expected '(', got '{}'.", tok.token);
+        let msg = format!("Invalid function definition. Expected '(', got '{}'.", tok.token);
         return Err(ParseError::new(tok.location, msg));
     }
 
@@ -519,7 +519,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
     tok = tokiter.next().unwrap();
     if let Token::Rparen = tok.token {
     } else {
-        let msg = format!("Invalid function declaration. Expected ')', got '{}'.", tok.token);
+        let msg = format!("Invalid function definition. Expected ')', got '{}'.", tok.token);
         return Err(ParseError::new(tok.location, msg));
     }
 
@@ -527,7 +527,7 @@ fn parse_function(tokiter: &mut MultiPeek<Iter<TokNLoc>>) -> Result<Function, Pa
     tok = tokiter.next().unwrap();
     if let Token::Lbrace = tok.token {
     } else {
-        let msg = format!("Invalid function declaration. Expected '{{', got '{}'.", tok.token);
+        let msg = format!("Invalid function definition. Expected '{{', got '{}'.", tok.token);
         return Err(ParseError::new(tok.location, msg));
     }
 
