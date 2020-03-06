@@ -10,11 +10,10 @@ mod ast;
 use ast::print_program;
 
 mod parser;
-use parser::parse;
+use parser::Parser;
 
 mod codegen;
 use codegen::Generator;
-
 
 fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &str) {
     let mut line_starts = Vec::new();
@@ -101,7 +100,7 @@ fn main() {
         println!("{}", tokenstrs.join(" "));
     }
 
-    let program = match parse(&tokens) {
+    let program = match Parser::new(&tokens).parse() {
         Ok(prog) => prog,
         Err(err) => {
             let error_message = format!("ParseError: {}", err.message);
