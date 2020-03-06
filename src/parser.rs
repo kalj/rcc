@@ -36,7 +36,7 @@ impl error::Error for ParseError {
     }
 }
 
-fn mkperr(tok: &TokNLoc, msg: &str) -> ParseError {
+fn mkperr(tok: TokNLoc, msg: &str) -> ParseError {
     ParseError { cursor: tok.location, message: format!("{}, got '{}'.", msg, tok.token) }
 }
 
@@ -49,38 +49,59 @@ impl Parser<'_> {
         Parser { tokiter: itertools::multipeek(tokens.iter()) }
     }
 
+    fn next(&mut self) -> Option<TokNLoc> {
+        match self.tokiter.next() {
+            Some(t) => Some(t.clone()),
+            None => None,
+        }
+    }
+
+    fn peek_n(&mut self, n: u8) -> Option<TokNLoc> {
+        let mut p = None;
+        for _i in 0..n {
+            p = self.tokiter.peek();
+        }
+        let res = match p {
+            Some(t) => Some((*t).clone()),
+            None => None,
+        };
+        self.tokiter.reset_peek();
+        res
+    }
+
+    fn peek(&mut self) -> Option<TokNLoc> {
+        self.peek_n(1)
+    }
+
     pub fn parse(&mut self) -> Result<Program, ParseError> {
         self.parse_program()
     }
 
     fn parse_postfix_expression(&mut self) -> Result<Expression, ParseError> {
-        let tok = self.tokiter.next().unwrap();
-        match &tok.token {
+        let tok = self.next().unwrap();
+        match tok.token {
             Token::Lparen => {
                 let subexpr = self.parse_expression()?;
-                let tok = &self.tokiter.next().unwrap();
+                let tok = self.next().unwrap();
                 match tok.token {
                     Token::Rparen => Ok(subexpr),
                     _ => Err(mkperr(tok, "Missing closing parenthesis after expression")),
                 }
             }
             Token::Identifier(id) => {
-                match self.tokiter.peek().unwrap().token {
+                match self.peek().unwrap().token {
                     Token::Increment => {
-                        self.tokiter.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Inc, id.to_string()))
+                        self.next(); // consume
+                        Ok(Expression::PostfixOp(FixOp::Inc, id))
                     }
                     Token::Decrement => {
-                        self.tokiter.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Dec, id.to_string()))
+                        self.next(); // consume
+                        Ok(Expression::PostfixOp(FixOp::Dec, id))
                     }
-                    _ => {
-                        self.tokiter.reset_peek();
-                        Ok(Expression::Variable(id.to_string()))
-                    }
+                    _ => Ok(Expression::Variable(id)),
                 }
             }
-            Token::IntLiteral(v) => Ok(Expression::Constant(*v)),
+            Token::IntLiteral(v) => Ok(Expression::Constant(v)),
             _ => Err(mkperr(
                 tok,
                 "Invalid postfix expression. \
@@ -91,28 +112,27 @@ impl Parser<'_> {
     }
 
     fn parse_prefix_expression(&mut self) -> Result<Expression, ParseError> {
-        let tok = self.tokiter.peek().unwrap();
-        match &tok.token {
+        let tok = self.peek().unwrap();
+        match tok.token {
             Token::Minus => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let operand = self.parse_prefix_expression()?;
                 Ok(Expression::UnaryOp(UnaryOp::Negate, Box::new(operand)))
             }
             Token::Not => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let operand = self.parse_prefix_expression()?;
                 Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(operand)))
             }
             Token::Complement => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let operand = self.parse_prefix_expression()?;
                 Ok(Expression::UnaryOp(UnaryOp::Complement, Box::new(operand)))
             }
             Token::Increment => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
 
-                let next_loc = self.tokiter.peek().unwrap().location; // for mkperr message
-                self.tokiter.reset_peek();
+                let next_loc = self.peek().unwrap().location; // for mkperr message
 
                 let operand = self.parse_postfix_expression()?;
                 if let Expression::Variable(id) = operand {
@@ -126,10 +146,9 @@ impl Parser<'_> {
                 }
             }
             Token::Decrement => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
 
-                let next_loc = self.tokiter.peek().unwrap().location; // for mkperr message
-                self.tokiter.reset_peek();
+                let next_loc = self.peek().unwrap().location; // for mkperr message
 
                 let operand = self.parse_postfix_expression()?;
                 if let Expression::Variable(id) = operand {
@@ -142,17 +161,14 @@ impl Parser<'_> {
                     ))
                 }
             }
-            _ => {
-                self.tokiter.reset_peek();
-                self.parse_postfix_expression()
-            }
+            _ => self.parse_postfix_expression(),
         }
     }
 
     fn parse_multiplicative_expression(&mut self) -> Result<Expression, ParseError> {
         let mut factor = self.parse_prefix_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             let optop = match tok.token {
                 Token::Multiplication => Some(BinaryOp::Multiplication),
                 Token::Division => Some(BinaryOp::Division),
@@ -160,63 +176,60 @@ impl Parser<'_> {
                 _ => None,
             };
             if let Some(op) = optop {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_factor = self.parse_prefix_expression()?;
                 factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(factor)
     }
 
     fn parse_additive_expression(&mut self) -> Result<Expression, ParseError> {
         let mut term = self.parse_multiplicative_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             let optop = match tok.token {
                 Token::Minus => Some(BinaryOp::Subtraction),
                 Token::Plus => Some(BinaryOp::Addition),
                 _ => None,
             };
             if let Some(op) = optop {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_term = self.parse_multiplicative_expression()?;
                 term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(term)
     }
 
     fn parse_shift_expression(&mut self) -> Result<Expression, ParseError> {
         let mut adexpr = self.parse_additive_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             let optop = match tok.token {
                 Token::LeftShift => Some(BinaryOp::LeftShift),
                 Token::RightShift => Some(BinaryOp::RightShift),
                 _ => None,
             };
             if let Some(op) = optop {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_adexpr = self.parse_additive_expression()?;
                 adexpr = Expression::BinaryOp(op, Box::new(adexpr), Box::new(next_adexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(adexpr)
     }
 
     fn parse_relational_expression(&mut self) -> Result<Expression, ParseError> {
         let mut shiftexpr = self.parse_shift_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             let optop = match tok.token {
                 Token::Greater => Some(BinaryOp::Greater),
                 Token::Less => Some(BinaryOp::Less),
@@ -225,7 +238,7 @@ impl Parser<'_> {
                 _ => None,
             };
             if let Some(op) = optop {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_shiftexpr = self.parse_shift_expression()?;
                 shiftexpr = Expression::BinaryOp(op, Box::new(shiftexpr), Box::new(next_shiftexpr));
             } else {
@@ -233,120 +246,113 @@ impl Parser<'_> {
             }
         }
 
-        self.tokiter.reset_peek();
         Ok(shiftexpr)
     }
 
     fn parse_equality_expression(&mut self) -> Result<Expression, ParseError> {
         let mut relexpr = self.parse_relational_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             let optop = match tok.token {
                 Token::Equal => Some(BinaryOp::Equal),
                 Token::NotEqual => Some(BinaryOp::NotEqual),
                 _ => None,
             };
             if let Some(op) = optop {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_relexpr = self.parse_relational_expression()?;
                 relexpr = Expression::BinaryOp(op, Box::new(relexpr), Box::new(next_relexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(relexpr)
     }
 
     fn parse_bitwise_and_expression(&mut self) -> Result<Expression, ParseError> {
         let mut eqexpr = self.parse_equality_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             if let Token::BitwiseAnd = tok.token {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_eqexpr = self.parse_equality_expression()?;
                 eqexpr = Expression::BinaryOp(BinaryOp::BitwiseAnd, Box::new(eqexpr), Box::new(next_eqexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(eqexpr)
     }
 
     fn parse_bitwise_xor_expression(&mut self) -> Result<Expression, ParseError> {
         let mut bandexpr = self.parse_bitwise_and_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             if let Token::BitwiseXor = tok.token {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_bandexpr = self.parse_bitwise_and_expression()?;
                 bandexpr = Expression::BinaryOp(BinaryOp::BitwiseXor, Box::new(bandexpr), Box::new(next_bandexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(bandexpr)
     }
 
     fn parse_bitwise_or_expression(&mut self) -> Result<Expression, ParseError> {
         let mut bxorexpr = self.parse_bitwise_xor_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             if let Token::BitwiseOr = tok.token {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_bxorexpr = self.parse_bitwise_xor_expression()?;
                 bxorexpr = Expression::BinaryOp(BinaryOp::BitwiseOr, Box::new(bxorexpr), Box::new(next_bxorexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(bxorexpr)
     }
 
     fn parse_logical_and_expression(&mut self) -> Result<Expression, ParseError> {
         let mut borexpr = self.parse_bitwise_or_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             if let Token::LogicalAnd = tok.token {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_borexpr = self.parse_bitwise_or_expression()?;
                 borexpr = Expression::BinaryOp(BinaryOp::LogicalAnd, Box::new(borexpr), Box::new(next_borexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(borexpr)
     }
 
     fn parse_logical_or_expression(&mut self) -> Result<Expression, ParseError> {
         let mut laexpr = self.parse_logical_and_expression()?;
 
-        while let Some(tok) = self.tokiter.peek() {
+        while let Some(tok) = self.peek() {
             if let Token::LogicalOr = tok.token {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let next_laexpr = self.parse_logical_and_expression()?;
                 laexpr = Expression::BinaryOp(BinaryOp::LogicalOr, Box::new(laexpr), Box::new(next_laexpr));
             } else {
                 break;
             }
         }
-        self.tokiter.reset_peek();
         Ok(laexpr)
     }
 
     fn parse_conditional_expression(&mut self) -> Result<Expression, ParseError> {
         let loexpr = self.parse_logical_or_expression()?;
 
-        if let Token::QuestionMark = &self.tokiter.peek().unwrap().token {
-            self.tokiter.next(); // consume
+        if let Token::QuestionMark = &self.peek().unwrap().token {
+            self.next(); // consume
 
             let ifexpr = self.parse_expression()?;
 
-            let tok = self.tokiter.next().unwrap();
+            let tok = self.next().unwrap();
             if let Token::Colon = tok.token {
             } else {
                 return Err(mkperr(tok, "Invalid conditional expression. Expected a colon"));
@@ -356,14 +362,13 @@ impl Parser<'_> {
 
             Ok(Expression::Conditional(Box::new(loexpr), Box::new(ifexpr), Box::new(elseexpr)))
         } else {
-            self.tokiter.reset_peek();
             Ok(loexpr)
         }
     }
 
     fn parse_expression(&mut self) -> Result<Expression, ParseError> {
-        if let Token::Identifier(id) = &self.tokiter.peek().unwrap().token {
-            let ass = match self.tokiter.peek().unwrap().token {
+        if let Token::Identifier(id) = &self.peek().unwrap().token {
+            let ass = match self.peek_n(2).unwrap().token {
                 Token::Assignment => Some(AssignmentKind::Write),
                 Token::AdditionAssignment => Some(AssignmentKind::Add),
                 Token::SubtractionAssignment => Some(AssignmentKind::Subtract),
@@ -379,20 +384,19 @@ impl Parser<'_> {
             };
 
             if let Some(asskind) = ass {
-                self.tokiter.next(); // consume twice
-                self.tokiter.next();
+                self.next(); // consume twice
+                self.next();
                 let expr = self.parse_expression()?;
                 return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr)));
             }
         }
 
-        self.tokiter.reset_peek();
         self.parse_conditional_expression()
     }
 
     fn ensure_semicolon(&mut self, msg: &str) -> Result<(), ParseError> {
         // ensure last token is a semicolon
-        let tok = self.tokiter.next().unwrap();
+        let tok = self.next().unwrap();
         if let Token::Semicolon = tok.token {
             Ok(())
         } else {
@@ -402,7 +406,7 @@ impl Parser<'_> {
 
     fn parse_compound_statement(&mut self) -> Result<CompoundStatement, ParseError> {
         // ensure next token is '{'
-        let tok = self.tokiter.next().unwrap();
+        let tok = self.next().unwrap();
         if let Token::Lbrace = tok.token {
         } else {
             return Err(mkperr(tok, "Invalid compound statement. Expected '{{'"));
@@ -412,34 +416,33 @@ impl Parser<'_> {
         let mut block_items = Vec::new();
 
         loop {
-            if let Token::Rbrace = self.tokiter.peek().unwrap().token {
+            if let Token::Rbrace = self.peek().unwrap().token {
                 break;
             }
-            self.tokiter.reset_peek();
             block_items.push(self.parse_block_item()?);
         }
 
         // we know next token is '}'
         // simply consume
-        self.tokiter.next(); // consume
-                             // return Err(mkperr(tok, "Invalid compound statement. Expected '}}'"));
+        self.next(); // consume
+                     // return Err(mkperr(tok, "Invalid compound statement. Expected '}}'"));
 
         Ok(CompoundStatement { block_items })
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
-        let stmt = match self.tokiter.peek().unwrap().token {
+        let stmt = match self.peek().unwrap().token {
             Token::Keyword(Keyword::Return) => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
                 let expr = self.parse_expression()?;
                 self.ensure_semicolon("Invalid return statement")?;
                 Statement::Return(expr)
             }
             Token::Keyword(Keyword::If) => {
-                self.tokiter.next(); // consume
+                self.next(); // consume
 
                 // ensure next token is '('
-                let mut tok = self.tokiter.next().unwrap();
+                let mut tok = self.next().unwrap();
                 if let Token::Lparen = tok.token {
                 } else {
                     return Err(mkperr(tok, "Invalid if statement. Expected '('"));
@@ -448,7 +451,7 @@ impl Parser<'_> {
                 let cond_expr = self.parse_expression()?;
 
                 // ensure next token is ')'
-                tok = self.tokiter.next().unwrap();
+                tok = self.next().unwrap();
                 if let Token::Rparen = tok.token {
                 } else {
                     return Err(mkperr(tok, "Invalid if statement. Expected ')' after condition expression"));
@@ -456,25 +459,21 @@ impl Parser<'_> {
 
                 let if_stmnt = self.parse_statement()?;
 
-                if let Token::Keyword(Keyword::Else) = self.tokiter.peek().unwrap().token {
-                    self.tokiter.next(); // consume
+                if let Token::Keyword(Keyword::Else) = self.peek().unwrap().token {
+                    self.next(); // consume
 
                     let else_stmnt = self.parse_statement()?;
 
                     Statement::If(cond_expr, Box::new(if_stmnt), Some(Box::new(else_stmnt)))
                 } else {
-                    self.tokiter.reset_peek();
                     Statement::If(cond_expr, Box::new(if_stmnt), None)
                 }
             }
             Token::Lbrace => {
-                self.tokiter.reset_peek(); // let parse_compound_statement handle the brace
-
                 let comp = self.parse_compound_statement()?;
                 Statement::Compound(comp)
             }
             _ => {
-                self.tokiter.reset_peek();
                 // then we have an expression to parse
                 let expr = self.parse_expression()?;
                 self.ensure_semicolon("Invalid expression statement")?;
@@ -486,12 +485,12 @@ impl Parser<'_> {
     }
 
     fn parse_block_item(&mut self) -> Result<BlockItem, ParseError> {
-        let bkitem = match self.tokiter.peek().unwrap().token {
+        let bkitem = match self.peek().unwrap().token {
             Token::Keyword(Keyword::Int) => {
                 self.tokiter.next(); // consume
 
-                let mut tok = self.tokiter.next().unwrap();
-                let id = match &tok.token {
+                let mut tok = self.next().unwrap();
+                let id = match tok.token {
                     Token::Identifier(n) => n,
                     _ => {
                         return Err(mkperr(tok, "Invalid declaration. Expected an identifier"));
@@ -499,25 +498,21 @@ impl Parser<'_> {
                 };
 
                 // parse initialization if next token is an assignment (equals sign)
-                tok = self.tokiter.peek().unwrap();
+                tok = self.peek().unwrap();
                 let init = match tok.token {
                     Token::Assignment => {
-                        self.tokiter.next(); // consume
+                        self.next(); // consume
                         Some(self.parse_expression()?)
                     }
-                    _ => {
-                        self.tokiter.reset_peek();
-                        None
-                    }
+                    _ => None,
                 };
 
                 // ensure last token is a semicolon
                 self.ensure_semicolon("Invalid declaration")?;
 
-                BlockItem::Decl(id.to_string(), init)
+                BlockItem::Decl(id, init)
             }
             _ => {
-                self.tokiter.reset_peek();
                 // then we have an expression to parse
                 BlockItem::Stmt(self.parse_statement()?)
             }
@@ -528,7 +523,7 @@ impl Parser<'_> {
 
     fn parse_function(&mut self) -> Result<Function, ParseError> {
         // ensure first token is an Int keyword
-        let mut tok = self.tokiter.next().unwrap();
+        let mut tok = self.next().unwrap();
 
         if let Token::Keyword(Keyword::Int) = tok.token {
         } else {
@@ -536,8 +531,8 @@ impl Parser<'_> {
         }
 
         // next token should be an identifier
-        tok = self.tokiter.next().unwrap();
-        let function_name = match &tok.token {
+        tok = self.next().unwrap();
+        let function_name = match tok.token {
             Token::Identifier(ident) => ident,
             _ => {
                 return Err(mkperr(tok, "Invalid function definition. Expected identifier"));
@@ -545,14 +540,14 @@ impl Parser<'_> {
         };
 
         // ensure next token is '('
-        tok = self.tokiter.next().unwrap();
+        tok = self.next().unwrap();
         if let Token::Lparen = tok.token {
         } else {
             return Err(mkperr(tok, "Invalid function definition. Expected '('"));
         }
 
         // ensure next token is ')'
-        tok = self.tokiter.next().unwrap();
+        tok = self.next().unwrap();
         if let Token::Rparen = tok.token {
         } else {
             return Err(mkperr(tok, "Invalid function definition. Expected ')'"));
@@ -567,10 +562,16 @@ impl Parser<'_> {
         // // ensure next token is '}'
         //     return Err(mkperr(tok, "Invalid function definition. Expected '}}'"));
 
-        Ok(Function::Func(function_name.to_string(), body))
+        Ok(Function::Func(function_name, body))
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
-        Ok(Program::Prog(self.parse_function()?))
+        let main = self.parse_function()?;
+
+        if let Some(t) = self.next() {
+            Err(mkperr(t, "Stray token at end of program"))
+        } else {
+            Ok(Program::Prog(main))
+        }
     }
 }

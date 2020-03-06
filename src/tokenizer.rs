@@ -235,6 +235,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
     Err(TokenError { cursor })
 }
 
+#[derive(Clone)]
 pub struct TokNLoc {
     pub token: Token,
     pub location: usize,

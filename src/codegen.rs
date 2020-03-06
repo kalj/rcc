@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
 use crate::ast::{BlockItem, CompoundStatement, Expression, Function, Program, Statement};
@@ -64,6 +64,34 @@ impl Code {
     }
 }
 
+#[derive(Debug, Clone)]
+struct VarMap {
+    addr_map: HashMap<String, i32>,
+    regsize: u8,
+    stack_index: i32,
+    block_decl_set: HashSet<String>,
+}
+
+impl VarMap {
+    fn new(regsize: u8) -> VarMap {
+        VarMap { addr_map: HashMap::new(), regsize, stack_index: -(regsize as i32), block_decl_set: HashSet::new() }
+    }
+
+    fn block_decl(&self, name: &str) -> bool {
+        self.block_decl_set.contains(name)
+    }
+
+    fn insert(&mut self, name: &str) {
+        self.addr_map.insert(name.to_string(), self.stack_index);
+        self.stack_index -= self.regsize as i32;
+        self.block_decl_set.insert(name.to_string());
+    }
+
+    fn get(&self, name: &str) -> i32 {
+        self.addr_map[name]
+    }
+}
+
 pub struct Generator {
     emit_32bit: bool,
     label_counter: i32,
@@ -74,9 +102,7 @@ pub struct Generator {
     rega32: String,
     regc32: String,
     regd32: String,
-    bytes_per_reg: usize,
-    var_map: HashMap<String, i32>,
-    var_stack_index: i32,
+    var_map: VarMap,
 }
 
 impl Generator {
@@ -92,9 +118,7 @@ impl Generator {
             rega32: "%eax".to_string(),
             regc32: "%ecx".to_string(),
             regd32: "%edx".to_string(),
-            bytes_per_reg,
-            var_map: HashMap::new(),
-            var_stack_index: -(bytes_per_reg as i32),
+            var_map: VarMap::new(bytes_per_reg),
         }
     }
 
@@ -179,7 +203,7 @@ impl Generator {
                 code.push(CodeLine::i3("mov", &literal, &self.rega32));
             }
             Expression::Variable(id) => {
-                let var_offset = self.var_map[id];
+                let var_offset = self.var_map.get(id);
                 code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::UnaryOp(uop, expr) => {
@@ -248,7 +272,7 @@ impl Generator {
                 code.append(self.generate_binop_code(bop))
             }
             Expression::PrefixOp(fixop, id) => {
-                let var_offset = self.var_map[id];
+                let var_offset = self.var_map.get(id);
                 if let FixOp::Inc = fixop {
                     code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
                 } else {
@@ -257,7 +281,7 @@ impl Generator {
                 code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::PostfixOp(fixop, id) => {
-                let var_offset = self.var_map[id];
+                let var_offset = self.var_map.get(id);
                 code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
                 if let FixOp::Inc = fixop {
                     code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
@@ -267,7 +291,7 @@ impl Generator {
             }
             Expression::Assign(kind, id, expr) => {
                 code = self.generate_expression_code(expr);
-                let var_offset = self.var_map[id];
+                let var_offset = self.var_map.get(id);
 
                 let binop = match kind {
                     AssignmentKind::Write => None,
@@ -365,21 +389,12 @@ impl Generator {
         }
     }
 
-    fn generate_compound_statement(&mut self, comp: &CompoundStatement) -> Code {
-        let mut code = Code::new();
-        for bkitem in &comp.block_items {
-            code.append(self.generate_block_item_code(bkitem));
-        }
-
-        code
-    }
-
     fn generate_block_item_code(&mut self, bkitem: &BlockItem) -> Code {
         let mut code = Code::new();
         match bkitem {
             BlockItem::Decl(id, init) => {
-                if self.var_map.contains_key(id) {
-                    panic!("Variable {} already declared", id);
+                if self.var_map.block_decl(id) {
+                    panic!("Variable {} already declared in block", id);
                 }
                 if let Some(expr) = init {
                     code = self.generate_expression_code(&expr); //            possibly compute initial value, saved in %rax
@@ -387,13 +402,29 @@ impl Generator {
                     code.push(CodeLine::i3("mov", "$0", &self.rega)); //       otherwise initialize %rax with 0
                 }
                 code.push(CodeLine::i2("push", &self.rega)); //                push value on stack at known index
-                self.var_map.insert(id.to_string(), self.var_stack_index); //  save name and stack offset
-                self.var_stack_index -= self.bytes_per_reg as i32; //          update stack index
+                self.var_map.insert(id); //                                    save new variable
             }
             BlockItem::Stmt(stmt) => {
                 code = self.generate_statement_code(&stmt);
             }
         }
+
+        code
+    }
+
+    fn generate_compound_statement(&mut self, comp: &CompoundStatement) -> Code {
+        let old_var_map = self.var_map.clone();
+        self.var_map.block_decl_set = HashSet::new();
+
+        let mut code = Code::new();
+        for bkitem in &comp.block_items {
+            code.append(self.generate_block_item_code(bkitem));
+        }
+
+        // restore old var_map, and stack pointer
+        let diff_stack_index = old_var_map.stack_index - self.var_map.stack_index;
+        self.var_map = old_var_map;
+        code.push(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.regsp));
 
         code
     }
