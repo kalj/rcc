@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, CompoundStatement, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, CompoundStatement, Declaration, Expression, Function, Program, Statement};
 
 //===================================================================
 // Code generation
@@ -358,7 +358,10 @@ impl Generator {
                 self.emit(CodeLine::i2("pop", &self.regbp));
                 self.emit(CodeLine::i1("ret"));
             }
+            Statement::Break => Code::new(),
+            Statement::Continue => Code::new(),
             Statement::Expr(expr) => self.generate_expression_code(&expr),
+            Statement::Null => Code::new(),
             Statement::If(condexpr, ifstmt, maybe_elsestmt) => {
 
                 if let Some(elsestmt) = maybe_elsestmt {
@@ -391,13 +394,26 @@ impl Generator {
                     self.emit(CodeLine::lbl(&end));
                 }
             }
+            Statement::While(cond, body) => {
+                Code::new()
+            }
+            Statement::DoWhile(body, cond) => {
+                Code::new()
+            }
+            Statement::For(expr, cond, maybe_postexpr, body) => {
+                Code::new()
+            }
+            Statement::ForDecl(decl, cond, maybe_postexpr, body) => {
+                Code::new()
+            }
+
             Statement::Compound(comp) => self.generate_compound_statement(comp),
         }
     }
 
     fn generate_block_item_code(&mut self, bkitem: &BlockItem)  {
         match bkitem {
-            BlockItem::Decl(id, init) => {
+            BlockItem::Decl(Declaration{id, init}) => {
                 if self.var_map.block_decl(id) {
                     panic!("Variable {} already declared in block", id);
                 }

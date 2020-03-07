@@ -66,17 +66,30 @@ pub struct CompoundStatement {
 }
 
 #[derive(Debug)]
+pub struct Declaration {
+    pub id: String,
+    pub init: Option<Expression>,
+}
+
+#[derive(Debug)]
 pub enum Statement {
+    Null,
     Return(Expression),
     Expr(Expression),
     If(Expression, Box<Statement>, Option<Box<Statement>>),
     Compound(CompoundStatement),
+    For(Option<Expression>, Expression, Option<Expression>, Box<Statement>),
+    ForDecl(Declaration, Expression, Option<Expression>, Box<Statement>),
+    While(Expression, Box<Statement>),
+    DoWhile(Box<Statement>, Expression),
+    Continue,
+    Break,
 }
 
 #[derive(Debug)]
 pub enum BlockItem {
     Stmt(Statement),
-    Decl(String, Option<Expression>),
+    Decl(Declaration),
 }
 
 #[derive(Debug)]
@@ -144,10 +157,15 @@ fn print_statement(stmt: &Statement, lvl: i32) {
             print_expression(expr, lvl + 1);
             println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
+        Statement::Break => println!("{: <1$}Break", "", (lvl * 2) as usize),
+        Statement::Continue => println!("{: <1$}Continue", "", (lvl * 2) as usize),
         Statement::Expr(expr) => {
             println!("{: <1$}Expr {{", "", (lvl * 2) as usize);
             print_expression(expr, lvl + 1);
             println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+        Statement::Null => {
+            println!("{: <1$}NullStatement", "", (lvl * 2) as usize);
         }
         Statement::If(cond, if_stmt, else_stmt) => {
             println!("{: <1$}If {{", "", (lvl * 2) as usize);
@@ -163,6 +181,73 @@ fn print_statement(stmt: &Statement, lvl: i32) {
         Statement::Compound(comp_stmt) => {
             print_compound_statement(comp_stmt, lvl);
         }
+        Statement::While(cond, body) => {
+            println!("{: <1$}While {{", "", (lvl * 2) as usize);
+            println!("{: <1$} Condition:", "", (lvl * 2) as usize);
+            print_expression(cond, lvl + 1);
+            println!("{: <1$} Body:", "", (lvl * 2) as usize);
+            print_statement(body, lvl + 1);
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+        Statement::DoWhile(body, cond) => {
+            println!("{: <1$}DoWhile {{", "", (lvl * 2) as usize);
+            println!("{: <1$} Body:", "", (lvl * 2) as usize);
+            print_statement(body, lvl + 1);
+            println!("{: <1$} Condition:", "", (lvl * 2) as usize);
+            print_expression(cond, lvl + 1);
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+        Statement::For(maybe_initexpr, cond, maybe_postexpr, body) => {
+            println!("{: <1$}For {{", "", (lvl * 2) as usize);
+
+            println!("{: <1$} InitExpression:", "", (lvl * 2) as usize);
+            if let Some(initexpr) = maybe_initexpr {
+                print_expression(initexpr, lvl + 1);
+            }
+
+            println!("{: <1$} Condition:", "", (lvl * 2) as usize);
+            print_expression(cond, lvl + 1);
+
+            println!("{: <1$} PostExpression:", "", (lvl * 2) as usize);
+            if let Some(postexpr) = maybe_postexpr {
+                print_expression(postexpr, lvl + 1);
+            }
+
+            println!("{: <1$} Body:", "", (lvl * 2) as usize);
+            print_statement(body, lvl + 1);
+
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+        Statement::ForDecl(initdecl, cond, maybe_postexpr, body) => {
+            println!("{: <1$}ForDecl {{", "", (lvl * 2) as usize);
+
+            println!("{: <1$} InitDeclaration:", "", (lvl * 2) as usize);
+            print_declaration(initdecl, lvl + 1);
+
+            println!("{: <1$} Condition:", "", (lvl * 2) as usize);
+            print_expression(cond, lvl + 1);
+
+            println!("{: <1$} PostExpression:", "", (lvl * 2) as usize);
+            if let Some(postexpr) = maybe_postexpr {
+                print_expression(postexpr, lvl + 1);
+            }
+
+            println!("{: <1$} Body:", "", (lvl * 2) as usize);
+            print_statement(body, lvl + 1);
+
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+    }
+}
+
+fn print_declaration(decl: &Declaration, lvl: i32) {
+    let Declaration { id, init } = decl;
+    if let Some(expr) = init {
+        println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id);
+        print_expression(expr, lvl + 1);
+        println!("{: <1$}}}", "", (lvl * 2) as usize);
+    } else {
+        println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id);
     }
 }
 
@@ -173,14 +258,8 @@ fn print_block_item(bkitem: &BlockItem, lvl: i32) {
             print_statement(stmt, lvl + 1);
             println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
-        BlockItem::Decl(id, init) => {
-            if let Some(expr) = init {
-                println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id);
-                print_expression(expr, lvl + 1);
-                println!("{: <1$}}}", "", (lvl * 2) as usize);
-            } else {
-                println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id);
-            }
+        BlockItem::Decl(decl) => {
+            print_declaration(decl, lvl);
         }
     }
 }

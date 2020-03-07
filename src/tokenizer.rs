@@ -13,6 +13,11 @@ pub enum Keyword {
     Return,
     If,
     Else,
+    For,
+    While,
+    Do,
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +73,11 @@ fn keyword_to_str(kw: Keyword) -> String {
         Keyword::Return => "return",
         Keyword::If => "if",
         Keyword::Else => "else",
+        Keyword::For => "for",
+        Keyword::While => "while",
+        Keyword::Do => "do",
+        Keyword::Break => "break",
+        Keyword::Continue => "continue",
     }
     .to_string()
 }
@@ -208,6 +218,11 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Keyword(Keyword::Return),
         Token::Keyword(Keyword::If),
         Token::Keyword(Keyword::Else),
+        Token::Keyword(Keyword::For),
+        Token::Keyword(Keyword::While),
+        Token::Keyword(Keyword::Do),
+        Token::Keyword(Keyword::Break),
+        Token::Keyword(Keyword::Continue),
         Token::Identifier("a".to_string()), // with placeholder
         Token::IntLiteral(1),               // with placeholder
     ];
