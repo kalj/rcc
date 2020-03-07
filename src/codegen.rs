@@ -45,10 +45,6 @@ impl Code {
         self.code.push(cl)
     }
 
-    fn append(&mut self, mut more: Code) {
-        self.code.append(&mut more.code);
-    }
-
     pub fn get_str(self) -> String {
         let strs: Vec<String> = self
             .code
@@ -93,6 +89,7 @@ impl VarMap {
 }
 
 pub struct Generator {
+    pub code: Code,
     emit_32bit: bool,
     label_counter: i32,
     rega: String,
@@ -109,6 +106,7 @@ impl Generator {
     pub fn new(emit_32bit: bool) -> Generator {
         let bytes_per_reg = if emit_32bit { 4 } else { 8 };
         Generator {
+            code: Code::new(),
             emit_32bit,
             label_counter: 0,
             rega: (if emit_32bit { "%eax" } else { "%rax" }).to_string(),
@@ -128,103 +126,116 @@ impl Generator {
         lbl
     }
 
-    fn generate_binop_code(&self, binop: &BinaryOp) -> Code {
-        let mut code = Code::new();
+    fn new_scope(&mut self) -> VarMap {
+        let old_var_map = self.var_map.clone();
+        self.var_map.block_decl_set = HashSet::new();
+        old_var_map
+    }
+
+    fn restore_scope(&mut self, old_var_map: VarMap) {
+        // restore var_map, and stack pointer
+        let diff_stack_index = old_var_map.stack_index - self.var_map.stack_index;
+        self.var_map = old_var_map;
+        self.emit(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.regsp));
+    }
+
+    fn emit(&mut self, cl: CodeLine) {
+        self.code.push(cl)
+    }
+
+    fn generate_binop_code(&mut self, binop: &BinaryOp) {
 
         match binop {
             BinaryOp::Addition => {
-                code.push(CodeLine::i3("add", &self.regc32, &self.rega32)); //   add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("add", &self.regc32, &self.rega32)); //   add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
             }
             BinaryOp::Subtraction => {
-                code.push(CodeLine::i3("sub", &self.regc32, &self.rega32)); //   subtract %eax (arg1) - %ecx (arg2) -> %eax
+                self.emit(CodeLine::i3("sub", &self.regc32, &self.rega32)); //   subtract %eax (arg1) - %ecx (arg2) -> %eax
             }
             BinaryOp::Multiplication => {
-                code.push(CodeLine::i3("imul", &self.regc32, &self.rega32)); //  multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("imul", &self.regc32, &self.rega32)); //  multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
             }
             BinaryOp::Division | BinaryOp::Remainder => {
-                code.push(CodeLine::i1("cltd")); //                sign extend %eax into %edx:%eax
-                code.push(CodeLine::i2("idiv", &self.regc32)); //  idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                self.emit(CodeLine::i1("cltd")); //                sign extend %eax into %edx:%eax
+                self.emit(CodeLine::i2("idiv", &self.regc32)); //  idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
                 if let BinaryOp::Remainder = binop {
-                    code.push(CodeLine::i3("mov", &self.regd32, &self.rega32)); //   copy remainder into %eax
+                    self.emit(CodeLine::i3("mov", &self.regd32, &self.rega32)); //   copy remainder into %eax
                 }
             }
             BinaryOp::Equal => {
-                code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
-                code.push(CodeLine::i2("sete", "%al")); //                        set bit to 1 if ecx (op1) was equal to eax (op2)
+                self.emit(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
+                self.emit(CodeLine::i2("sete", "%al")); //                        set bit to 1 if ecx (op1) was equal to eax (op2)
             }
             BinaryOp::NotEqual => {
-                code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
-                code.push(CodeLine::i2("setne", "%al")); //                       set bit to 1 if ecx (op1) was not equal to eax (op2)
+                self.emit(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    set ZF if EAX == ECX
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setne", "%al")); //                       set bit to 1 if ecx (op1) was not equal to eax (op2)
             }
             BinaryOp::Less => {
-                code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
-                code.push(CodeLine::i2("setl", "%al")); //                        set bit to 1 if ecx (op1) was less than eax (op2)
+                self.emit(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setl", "%al")); //                        set bit to 1 if ecx (op1) was less than eax (op2)
             }
             BinaryOp::Greater => {
-                code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
-                code.push(CodeLine::i2("setg", "%al")); //                        set bit to 1 if ecx (op1) was greater than eax (op2)
+                self.emit(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setg", "%al")); //                        set bit to 1 if ecx (op1) was greater than eax (op2)
             }
             BinaryOp::LessEqual => {
-                code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
-                code.push(CodeLine::i2("setle", "%al")); //                       set bit to 1 if ecx (op1) was less than or equal to eax (op2)
+                self.emit(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setle", "%al")); //                       set bit to 1 if ecx (op1) was less than or equal to eax (op2)
             }
             BinaryOp::GreaterEqual => {
-                code.push(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
-                code.push(CodeLine::i2("setge", "%al")); //                       set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
+                self.emit(CodeLine::i3("cmp", &self.regc32, &self.rega32)); //    compare ECX and EAX
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //            zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setge", "%al")); //                       set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
             }
             BinaryOp::BitwiseOr => {
-                code.push(CodeLine::i3("or", &self.regc32, &self.rega32)); //    and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("or", &self.regc32, &self.rega32)); //    and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
             }
             BinaryOp::BitwiseXor => {
-                code.push(CodeLine::i3("xor", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("xor", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
             }
             BinaryOp::BitwiseAnd => {
-                code.push(CodeLine::i3("and", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("and", &self.regc32, &self.rega32)); //   and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
             }
             BinaryOp::LeftShift => {
-                code.push(CodeLine::i3("sal", "%cl", &self.rega32)); //          do arithmetic left shift (== logical left shift), %eax = %eax << %cl
+                self.emit(CodeLine::i3("sal", "%cl", &self.rega32)); //          do arithmetic left shift (== logical left shift), %eax = %eax << %cl
             }
             BinaryOp::RightShift => {
-                code.push(CodeLine::i3("sar", "%cl", &self.rega32)); //          do arithmetic right shift, %eax = %eax >> %cl
+                self.emit(CodeLine::i3("sar", "%cl", &self.rega32)); //          do arithmetic right shift, %eax = %eax >> %cl
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                 panic!("Internal Error"); // Handled above separately
             }
         }
-
-        code
     }
 
-    fn generate_expression_code(&mut self, expr: &Expression) -> Code {
-        let mut code = Code::new();
+    fn generate_expression_code(&mut self, expr: &Expression) {
         match expr {
             Expression::Constant(val) => {
                 let literal = format!("${}", val);
-                code.push(CodeLine::i3("mov", &literal, &self.rega32));
+                self.emit(CodeLine::i3("mov", &literal, &self.rega32));
             }
             Expression::Variable(id) => {
                 let var_offset = self.var_map.get(id);
-                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
+                self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::UnaryOp(uop, expr) => {
-                code = self.generate_expression_code(expr);
+                self.generate_expression_code(expr);
                 match uop {
                     UnaryOp::Negate => {
-                        code.push(CodeLine::i2("neg", &self.rega32));
+                        self.emit(CodeLine::i2("neg", &self.rega32));
                     }
                     UnaryOp::Not => {
-                        code.push(CodeLine::i3("cmp", "$0", &self.rega32));
-                        code.push(CodeLine::i3("mov", "$0", &self.rega32));
-                        code.push(CodeLine::i2("sete", "%al"));
+                        self.emit(CodeLine::i3("cmp", "$0", &self.rega32));
+                        self.emit(CodeLine::i3("mov", "$0", &self.rega32));
+                        self.emit(CodeLine::i2("sete", "%al"));
                     }
                     UnaryOp::Complement => {
-                        code.push(CodeLine::i2("not", &self.rega32));
+                        self.emit(CodeLine::i2("not", &self.rega32));
                     }
                 }
             }
@@ -233,68 +244,68 @@ impl Generator {
                 let cond2 = self.new_label();
                 let end = self.new_label();
 
-                code = self.generate_expression_code(e1);
+                self.generate_expression_code(e1);
                 // if true then just jump over second part and set true
                 // else evaluate second part and set to return status of that
-                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("je", &cond2)); //                            if ZF is set, go to cond2
-                code.push(CodeLine::i3("mov", "$1", &self.rega32)); //               else we are done, so set result to 1,
-                code.push(CodeLine::i2("jmp", &end)); //                             and jump to end.
-                code.push(CodeLine::lbl(&cond2));
-                code.append(self.generate_expression_code(e2));
-                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //               zero out EAX without changing ZF
-                code.push(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
-                code.push(CodeLine::lbl(&end));
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i2("je", &cond2)); //                            if ZF is set, go to cond2
+                self.emit(CodeLine::i3("mov", "$1", &self.rega32)); //               else we are done, so set result to 1,
+                self.emit(CodeLine::i2("jmp", &end)); //                             and jump to end.
+                self.emit(CodeLine::lbl(&cond2));
+                self.generate_expression_code(e2);
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //               zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
+                self.emit(CodeLine::lbl(&end));
             }
             Expression::BinaryOp(BinaryOp::LogicalAnd, e1, e2) => {
                 // setup labels
                 let cond2 = self.new_label();
                 let end = self.new_label();
 
-                code = self.generate_expression_code(e1);
+                self.generate_expression_code(e1);
                 // if false then just jump over second part and set false
                 // else evaluate second part and set to return status of that
-                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("jne", &cond2)); //                           if ZF is not set, go to cond2
-                code.push(CodeLine::i2("jmp", &end)); //                             else we are done (and eax is 0), so jump to end.
-                code.push(CodeLine::lbl(&cond2));
-                code.append(self.generate_expression_code(e2));
-                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i3("mov", "$0", &self.rega32)); //               zero out EAX without changing ZF
-                code.push(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
-                code.push(CodeLine::lbl(&end));
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i2("jne", &cond2)); //                           if ZF is not set, go to cond2
+                self.emit(CodeLine::i2("jmp", &end)); //                             else we are done (and eax is 0), so jump to end.
+                self.emit(CodeLine::lbl(&cond2));
+                self.generate_expression_code(e2);
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i3("mov", "$0", &self.rega32)); //               zero out EAX without changing ZF
+                self.emit(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
+                self.emit(CodeLine::lbl(&end));
             }
             Expression::BinaryOp(bop, e1, e2) => {
-                code = self.generate_expression_code(e1);
+                self.generate_expression_code(e1);
 
-                code.push(CodeLine::i2("push", &self.rega));
-                code.append(self.generate_expression_code(e2));
+                self.emit(CodeLine::i2("push", &self.rega));
+                self.generate_expression_code(e2);
 
-                code.push(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
-                code.push(CodeLine::i2("pop", &self.rega)); //                   get arg1 from stack into %eax
-                code.append(self.generate_binop_code(bop))
+                self.emit(CodeLine::i3("mov", &self.rega32, &self.regc32)); //   copy arg2 into %ecx
+                self.emit(CodeLine::i2("pop", &self.rega)); //                   get arg1 from stack into %eax
+                self.generate_binop_code(bop);
             }
             Expression::PrefixOp(fixop, id) => {
                 let var_offset = self.var_map.get(id);
                 if let FixOp::Inc = fixop {
-                    code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
+                    self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
                 } else {
-                    code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
+                    self.emit(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
                 }
-                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
+                self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
             }
             Expression::PostfixOp(fixop, id) => {
                 let var_offset = self.var_map.get(id);
-                code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
+                self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega));
                 if let FixOp::Inc = fixop {
-                    code.push(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
+                    self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.regbp)));
                 } else {
-                    code.push(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
+                    self.emit(CodeLine::i2("decl", &format!("{}({})", var_offset, self.regbp)));
                 }
             }
             Expression::Assign(kind, id, expr) => {
-                code = self.generate_expression_code(expr);
+                self.generate_expression_code(expr);
                 let var_offset = self.var_map.get(id);
 
                 let binop = match kind {
@@ -312,141 +323,128 @@ impl Generator {
                 };
 
                 if let Some(bop) = binop {
-                    code.push(CodeLine::i3("mov", &self.rega32, &self.regc32));
-                    code.push(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
-                    code.append(self.generate_binop_code(&bop));
+                    self.emit(CodeLine::i3("mov", &self.rega32, &self.regc32));
+                    self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.regbp), &self.rega32));
+                    self.generate_binop_code(&bop);
                 }
 
-                code.push(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp)));
+                self.emit(CodeLine::i3("mov", &self.rega32, &format!("{}({})", var_offset, self.regbp)));
             }
             Expression::Conditional(condexpr, ifexpr, elseexpr) => {
                 // setup labels
                 let else_case = self.new_label();
                 let end = self.new_label();
 
-                code = self.generate_expression_code(condexpr);
+                self.generate_expression_code(condexpr);
 
-                code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
 
-                code.append(self.generate_expression_code(ifexpr)); //               else execute ifexpr
-                code.push(CodeLine::i2("jmp", &end)); //                             then jump to end
+                self.generate_expression_code(ifexpr); //                            else execute ifexpr
+                self.emit(CodeLine::i2("jmp", &end)); //                             then jump to end
 
-                code.push(CodeLine::lbl(&else_case));
-                code.append(self.generate_expression_code(elseexpr));
-                code.push(CodeLine::lbl(&end));
+                self.emit(CodeLine::lbl(&else_case));
+                self.generate_expression_code(elseexpr);
+                self.emit(CodeLine::lbl(&end));
             }
         }
-        code
     }
 
-    fn generate_statement_code(&mut self, stmnt: &Statement) -> Code {
+    fn generate_statement_code(&mut self, stmnt: &Statement)  {
         match stmnt {
             Statement::Return(expr) => {
-                let mut code = self.generate_expression_code(&expr);
-                code.push(CodeLine::i3("mov", &self.regbp, &self.regsp));
-                code.push(CodeLine::i2("pop", &self.regbp));
-                code.push(CodeLine::i1("ret"));
-                code
+                self.generate_expression_code(&expr);
+                self.emit(CodeLine::i3("mov", &self.regbp, &self.regsp));
+                self.emit(CodeLine::i2("pop", &self.regbp));
+                self.emit(CodeLine::i1("ret"));
             }
             Statement::Expr(expr) => self.generate_expression_code(&expr),
             Statement::If(condexpr, ifstmt, maybe_elsestmt) => {
-                let mut code;
 
                 if let Some(elsestmt) = maybe_elsestmt {
                     // setup labels
                     let else_case = self.new_label();
                     let end = self.new_label();
 
-                    code = self.generate_expression_code(&condexpr);
+                    self.generate_expression_code(&condexpr);
 
-                    code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                    code.push(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
+                    self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                    self.emit(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
 
-                    code.append(self.generate_statement_code(ifstmt)); //                else execute ifstmt
-                    code.push(CodeLine::i2("jmp", &end)); //                             then jump to end
+                    self.generate_statement_code(ifstmt); //                             else execute ifstmt
+                    self.emit(CodeLine::i2("jmp", &end)); //                             then jump to end
 
-                    code.push(CodeLine::lbl(&else_case));
-                    code.append(self.generate_statement_code(elsestmt));
-                    code.push(CodeLine::lbl(&end));
+                    self.emit(CodeLine::lbl(&else_case));
+                    self.generate_statement_code(elsestmt);
+                    self.emit(CodeLine::lbl(&end));
                 } else {
                     // setup label
                     let end = self.new_label();
 
-                    code = self.generate_expression_code(&condexpr);
+                    self.generate_expression_code(&condexpr);
 
-                    code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                    code.push(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
+                    self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                    self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
 
-                    code.append(self.generate_statement_code(ifstmt)); //                else execute ifexpr
+                    self.generate_statement_code(ifstmt); //                             else execute ifexpr
 
-                    code.push(CodeLine::lbl(&end));
+                    self.emit(CodeLine::lbl(&end));
                 }
-
-                code
             }
             Statement::Compound(comp) => self.generate_compound_statement(comp),
         }
     }
 
-    fn generate_block_item_code(&mut self, bkitem: &BlockItem) -> Code {
-        let mut code = Code::new();
+    fn generate_block_item_code(&mut self, bkitem: &BlockItem)  {
         match bkitem {
             BlockItem::Decl(id, init) => {
                 if self.var_map.block_decl(id) {
                     panic!("Variable {} already declared in block", id);
                 }
                 if let Some(expr) = init {
-                    code = self.generate_expression_code(&expr); //            possibly compute initial value, saved in %rax
+                    self.generate_expression_code(&expr); //                   possibly compute initial value, saved in %rax
                 } else {
-                    code.push(CodeLine::i3("mov", "$0", &self.rega)); //       otherwise initialize %rax with 0
+                    self.emit(CodeLine::i3("mov", "$0", &self.rega)); //       otherwise initialize %rax with 0
                 }
-                code.push(CodeLine::i2("push", &self.rega)); //                push value on stack at known index
+                self.emit(CodeLine::i2("push", &self.rega)); //                push value on stack at known index
                 self.var_map.insert(id); //                                    save new variable
             }
             BlockItem::Stmt(stmt) => {
-                code = self.generate_statement_code(&stmt);
+                self.generate_statement_code(&stmt);
             }
         }
-
-        code
     }
 
-    fn generate_compound_statement(&mut self, comp: &CompoundStatement) -> Code {
-        let old_var_map = self.var_map.clone();
-        self.var_map.block_decl_set = HashSet::new();
 
-        let mut code = Code::new();
+
+    fn generate_compound_statement(&mut self, comp: &CompoundStatement)  {
+
+        let old_scope = self.new_scope();
+
         for bkitem in &comp.block_items {
-            code.append(self.generate_block_item_code(bkitem));
+            self.generate_block_item_code(bkitem);
         }
 
-        // restore old var_map, and stack pointer
-        let diff_stack_index = old_var_map.stack_index - self.var_map.stack_index;
-        self.var_map = old_var_map;
-        code.push(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.regsp));
-
-        code
+        // restore old scope
+        self.restore_scope(old_scope);
     }
 
-    fn generate_function_code(&mut self, func: Function) -> Code {
-        let mut code = Code::new();
-
+    fn generate_function_code(&mut self, func: Function)  {
         let Function::Func(name, body) = func;
-        code.push(CodeLine::i2(".globl", &name));
-        code.push(CodeLine::lbl(&name));
-        code.push(CodeLine::i2("push", &self.regbp));
-        code.push(CodeLine::i3("mov", &self.regsp, &self.regbp));
-        code.append(self.generate_compound_statement(&body));
 
-        if !code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
-            code.append(self.generate_statement_code(&Statement::Return(Expression::Constant(0))));
+        self.emit(CodeLine::i2(".globl", &name));
+        self.emit(CodeLine::lbl(&name));
+        self.emit(CodeLine::i2("push", &self.regbp));
+        self.emit(CodeLine::i3("mov", &self.regsp, &self.regbp));
+        self.generate_compound_statement(&body);
+
+        if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
+            self.generate_statement_code(&Statement::Return(Expression::Constant(0)));
         }
-        code
     }
 
-    pub fn generate_program_code(&mut self, prog: Program) -> Code {
+    pub fn generate_program_code(&mut self, prog: Program) {
         let Program::Prog(func) = prog;
-        self.generate_function_code(func)
+        self.generate_function_code(func);
     }
 }

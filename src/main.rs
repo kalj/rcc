@@ -115,7 +115,7 @@ fn main() {
     }
 
     let mut generator = Generator::new(emit_32bit);
-    let assembly_code = generator.generate_program_code(program);
+    generator.generate_program_code(program);
 
-    fs::write(output_path, assembly_code.get_str()).expect("Failed writing assembly output");
+    fs::write(output_path, generator.code.get_str()).expect("Failed writing assembly output");
 }
