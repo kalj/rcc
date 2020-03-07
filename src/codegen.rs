@@ -88,6 +88,11 @@ impl VarMap {
     }
 }
 
+struct LoopContext {
+    break_lbl: Option<String>,
+    continue_lbl: Option<String>,
+}
+
 pub struct Generator {
     pub code: Code,
     emit_32bit: bool,
@@ -100,6 +105,7 @@ pub struct Generator {
     regc32: String,
     regd32: String,
     var_map: VarMap,
+    loop_ctx: LoopContext,
 }
 
 impl Generator {
@@ -117,7 +123,12 @@ impl Generator {
             regc32: "%ecx".to_string(),
             regd32: "%edx".to_string(),
             var_map: VarMap::new(bytes_per_reg),
+            loop_ctx: LoopContext { break_lbl: None, continue_lbl: None },
         }
+    }
+
+    fn emit(&mut self, cl: CodeLine) {
+        self.code.push(cl)
     }
 
     fn new_label(&mut self) -> String {
@@ -139,12 +150,18 @@ impl Generator {
         self.emit(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.regsp));
     }
 
-    fn emit(&mut self, cl: CodeLine) {
-        self.code.push(cl)
+    fn new_loop_context(&mut self, brk_lbl: &str, cnt_lbl: &str) -> LoopContext {
+        std::mem::replace(
+            &mut self.loop_ctx,
+            LoopContext { break_lbl: Some(brk_lbl.to_string()), continue_lbl: Some(cnt_lbl.to_string()) },
+        )
+    }
+
+    fn restore_loop_context(&mut self, old_loop_context: LoopContext) {
+        self.loop_ctx = old_loop_context;
     }
 
     fn generate_binop_code(&mut self, binop: &BinaryOp) {
-
         match binop {
             BinaryOp::Addition => {
                 self.emit(CodeLine::i3("add", &self.regc32, &self.rega32)); //   add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
@@ -350,7 +367,21 @@ impl Generator {
         }
     }
 
-    fn generate_statement_code(&mut self, stmnt: &Statement)  {
+    fn generate_declaration_code(&mut self, decl: &Declaration) {
+        let Declaration { id, init } = decl;
+        if self.var_map.block_decl(id) {
+            panic!("Variable {} already declared in block", id);
+        }
+        if let Some(expr) = init {
+            self.generate_expression_code(&expr); //                   possibly compute initial value, saved in %rax
+        } else {
+            self.emit(CodeLine::i3("mov", "$0", &self.rega)); //       otherwise initialize %rax with 0
+        }
+        self.emit(CodeLine::i2("push", &self.rega)); //                push value on stack at known index
+        self.var_map.insert(id); //                                    save new variable
+    }
+
+    fn generate_statement_code(&mut self, stmnt: &Statement) {
         match stmnt {
             Statement::Return(expr) => {
                 self.generate_expression_code(&expr);
@@ -358,12 +389,17 @@ impl Generator {
                 self.emit(CodeLine::i2("pop", &self.regbp));
                 self.emit(CodeLine::i1("ret"));
             }
-            Statement::Break => Code::new(),
-            Statement::Continue => Code::new(),
+            Statement::Break => self.emit(CodeLine::i2(
+                "jmp",
+                &self.loop_ctx.break_lbl.as_ref().expect("Invalid break not inside a loop or switch statement"),
+            )),
+            Statement::Continue => self.emit(CodeLine::i2(
+                "jmp",
+                &self.loop_ctx.continue_lbl.as_ref().expect("Invalid continue not inside a loop"),
+            )),
             Statement::Expr(expr) => self.generate_expression_code(&expr),
-            Statement::Null => Code::new(),
+            Statement::Null => {}
             Statement::If(condexpr, ifstmt, maybe_elsestmt) => {
-
                 if let Some(elsestmt) = maybe_elsestmt {
                     // setup labels
                     let else_case = self.new_label();
@@ -395,46 +431,116 @@ impl Generator {
                 }
             }
             Statement::While(cond, body) => {
-                Code::new()
+                // setup labels
+                let start = self.new_label();
+                let end = self.new_label();
+                let old_loop_ctx = self.new_loop_context(&end, &start);
+
+                self.emit(CodeLine::lbl(&start));
+                self.generate_expression_code(&cond);
+
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
+
+                self.generate_statement_code(body); //                               else execute body
+                self.emit(CodeLine::i2("jmp", &start)); //                           and go to next iteration
+
+                self.emit(CodeLine::lbl(&end));
+                self.restore_loop_context(old_loop_ctx);
             }
             Statement::DoWhile(body, cond) => {
-                Code::new()
-            }
-            Statement::For(expr, cond, maybe_postexpr, body) => {
-                Code::new()
-            }
-            Statement::ForDecl(decl, cond, maybe_postexpr, body) => {
-                Code::new()
-            }
+                // setup labels
+                let start = self.new_label();
+                let end = self.new_label();
+                let old_loop_ctx = self.new_loop_context(&end, &start);
 
+                self.emit(CodeLine::lbl(&start));
+
+                self.generate_statement_code(body); //                               execute body
+
+                self.generate_expression_code(&cond);
+
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               check if false (set ZF if EAX == 0)
+                self.emit(CodeLine::i2("jne", &start)); //                           if true (ZF is not set), go start
+                // else simply fall through to end
+                self.emit(CodeLine::lbl(&end));
+
+                self.restore_loop_context(old_loop_ctx);
+            }
+            Statement::For(maybe_initexpr, cond, maybe_postexpr, body) => {
+                // setup labels
+                let start = self.new_label();
+                let end = self.new_label();
+                let cnt = self.new_label();
+                let old_loop_ctx = self.new_loop_context(&end, &cnt);
+
+                if let Some(initexpr) = maybe_initexpr {
+                    self.generate_expression_code(&initexpr);
+                }
+
+                self.emit(CodeLine::lbl(&start));
+                self.generate_expression_code(&cond);
+
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
+
+                self.generate_statement_code(body); //                               else execute body
+
+                self.emit(CodeLine::lbl(&cnt)); //                                   jump here from continue in body
+                if let Some(postexpr) = maybe_postexpr {
+                    self.generate_expression_code(&postexpr);
+                }
+
+                self.emit(CodeLine::i2("jmp", &start)); //                           and go to next iteration
+
+                self.emit(CodeLine::lbl(&end));
+                self.restore_loop_context(old_loop_ctx);
+            }
+            Statement::ForDecl(initdecl, cond, maybe_postexpr, body) => {
+                // setup labels
+                let start = self.new_label();
+                let end = self.new_label();
+                let cnt = self.new_label();
+                let old_loop_ctx = self.new_loop_context(&end, &cnt);
+
+                let old_scope = self.new_scope();
+
+                self.generate_declaration_code(&initdecl);
+
+                self.emit(CodeLine::lbl(&start));
+                self.generate_expression_code(&cond);
+
+                self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
+                self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
+
+                self.generate_statement_code(body); //                               else execute body
+
+                self.emit(CodeLine::lbl(&cnt)); //                                   jump here from continue in body
+                if let Some(postexpr) = maybe_postexpr {
+                    self.generate_expression_code(&postexpr);
+                }
+
+                self.emit(CodeLine::i2("jmp", &start)); //                           and go to next iteration
+
+                self.emit(CodeLine::lbl(&end));
+
+                // restore old scope
+                self.restore_scope(old_scope);
+
+                self.restore_loop_context(old_loop_ctx);
+            }
             Statement::Compound(comp) => self.generate_compound_statement(comp),
         }
     }
 
-    fn generate_block_item_code(&mut self, bkitem: &BlockItem)  {
+    fn generate_block_item_code(&mut self, bkitem: &BlockItem) {
         match bkitem {
-            BlockItem::Decl(Declaration{id, init}) => {
-                if self.var_map.block_decl(id) {
-                    panic!("Variable {} already declared in block", id);
-                }
-                if let Some(expr) = init {
-                    self.generate_expression_code(&expr); //                   possibly compute initial value, saved in %rax
-                } else {
-                    self.emit(CodeLine::i3("mov", "$0", &self.rega)); //       otherwise initialize %rax with 0
-                }
-                self.emit(CodeLine::i2("push", &self.rega)); //                push value on stack at known index
-                self.var_map.insert(id); //                                    save new variable
-            }
-            BlockItem::Stmt(stmt) => {
-                self.generate_statement_code(&stmt);
-            }
+            BlockItem::Decl(decl) => self.generate_declaration_code(decl),
+            BlockItem::Stmt(stmt) => self.generate_statement_code(&stmt),
         }
     }
 
-
-
-    fn generate_compound_statement(&mut self, comp: &CompoundStatement)  {
-
+    fn generate_compound_statement(&mut self, comp: &CompoundStatement) {
         let old_scope = self.new_scope();
 
         for bkitem in &comp.block_items {
@@ -445,7 +551,7 @@ impl Generator {
         self.restore_scope(old_scope);
     }
 
-    fn generate_function_code(&mut self, func: Function)  {
+    fn generate_function_code(&mut self, func: Function) {
         let Function::Func(name, body) = func;
 
         self.emit(CodeLine::i2(".globl", &name));
