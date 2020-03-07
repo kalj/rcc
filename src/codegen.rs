@@ -122,6 +122,12 @@ impl Generator {
         }
     }
 
+    fn new_label(&mut self) -> String {
+        let lbl = format!("_label{}", self.label_counter);
+        self.label_counter += 1;
+        lbl
+    }
+
     fn generate_binop_code(&self, binop: &BinaryOp) -> Code {
         let mut code = Code::new();
 
@@ -224,9 +230,8 @@ impl Generator {
             }
             Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2) => {
                 // setup labels
-                let cond2 = format!("_label{}", self.label_counter);
-                let end = format!("_label{}", self.label_counter + 1);
-                self.label_counter += 2;
+                let cond2 = self.new_label();
+                let end = self.new_label();
 
                 code = self.generate_expression_code(e1);
                 // if true then just jump over second part and set true
@@ -244,9 +249,8 @@ impl Generator {
             }
             Expression::BinaryOp(BinaryOp::LogicalAnd, e1, e2) => {
                 // setup labels
-                let cond2 = format!("_label{}", self.label_counter);
-                let end = format!("_label{}", self.label_counter + 1);
-                self.label_counter += 2;
+                let cond2 = self.new_label();
+                let end = self.new_label();
 
                 code = self.generate_expression_code(e1);
                 // if false then just jump over second part and set false
@@ -317,14 +321,13 @@ impl Generator {
             }
             Expression::Conditional(condexpr, ifexpr, elseexpr) => {
                 // setup labels
-                let else_case = format!("_label{}", self.label_counter);
-                let end = format!("_label{}", self.label_counter + 1);
-                self.label_counter += 2;
+                let else_case = self.new_label();
+                let end = self.new_label();
 
                 code = self.generate_expression_code(condexpr);
 
                 code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                code.push(CodeLine::i2("je", &else_case)); //                        if ZF is not set, go to else_case
+                code.push(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
 
                 code.append(self.generate_expression_code(ifexpr)); //               else execute ifexpr
                 code.push(CodeLine::i2("jmp", &end)); //                             then jump to end
@@ -352,15 +355,13 @@ impl Generator {
 
                 if let Some(elsestmt) = maybe_elsestmt {
                     // setup labels
-                    let else_case = format!("_label{}", self.label_counter);
-                    self.label_counter += 1;
-                    let end = format!("_label{}", self.label_counter);
-                    self.label_counter += 1;
+                    let else_case = self.new_label();
+                    let end = self.new_label();
 
                     code = self.generate_expression_code(&condexpr);
 
                     code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                    code.push(CodeLine::i2("je", &else_case)); //                        if ZF is not set, go to else_case
+                    code.push(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
 
                     code.append(self.generate_statement_code(ifstmt)); //                else execute ifstmt
                     code.push(CodeLine::i2("jmp", &end)); //                             then jump to end
@@ -370,13 +371,12 @@ impl Generator {
                     code.push(CodeLine::lbl(&end));
                 } else {
                     // setup label
-                    let end = format!("_label{}", self.label_counter);
-                    self.label_counter += 1;
+                    let end = self.new_label();
 
                     code = self.generate_expression_code(&condexpr);
 
                     code.push(CodeLine::i3("cmp", "$0", &self.rega32)); //               set ZF if EAX == 0
-                    code.push(CodeLine::i2("je", &end)); //                              if ZF is not set, go to end
+                    code.push(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
 
                     code.append(self.generate_statement_code(ifstmt)); //                else execute ifexpr
 
