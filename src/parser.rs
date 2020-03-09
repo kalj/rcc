@@ -165,183 +165,138 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_multiplicative_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut factor = self.parse_prefix_expression()?;
+    fn parse_binary_expression<P, T>(
+        &mut self,
+        parse_operand: P,
+        token_to_operation: T,
+    ) -> Result<Expression, ParseError>
+    where
+        P: Fn(&mut Parser) -> Result<Expression, ParseError>,
+        T: Fn(Token) -> Option<BinaryOp>,
+    {
+        let mut operand = parse_operand(self)?;
 
         while let Some(tok) = self.peek() {
-            let optop = match tok.token {
-                Token::Multiplication => Some(BinaryOp::Multiplication),
-                Token::Division => Some(BinaryOp::Division),
-                Token::Remainder => Some(BinaryOp::Remainder),
-                _ => None,
-            };
+            let optop = token_to_operation(tok.token);
+
             if let Some(op) = optop {
                 self.next(); // consume
-                let next_factor = self.parse_prefix_expression()?;
-                factor = Expression::BinaryOp(op, Box::new(factor), Box::new(next_factor));
+                let next_operand = parse_operand(self)?;
+                operand = Expression::BinaryOp(op, Box::new(operand), Box::new(next_operand));
             } else {
                 break;
             }
         }
-        Ok(factor)
+
+        Ok(operand)
+    }
+
+    fn parse_multiplicative_expression(&mut self) -> Result<Expression, ParseError> {
+        let parse_factor = |parser: &mut Parser| parser.parse_prefix_expression();
+        let token_to_multiplicative_op = |tok| match tok {
+            Token::Multiplication => Some(BinaryOp::Multiplication),
+            Token::Division => Some(BinaryOp::Division),
+            Token::Remainder => Some(BinaryOp::Remainder),
+            _ => None,
+        };
+
+        self.parse_binary_expression(parse_factor, token_to_multiplicative_op)
     }
 
     fn parse_additive_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut term = self.parse_multiplicative_expression()?;
+        let parse_term = |parser: &mut Parser| parser.parse_multiplicative_expression();
+        let token_to_additive_op = |tok| match tok {
+            Token::Minus => Some(BinaryOp::Subtraction),
+            Token::Plus => Some(BinaryOp::Addition),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            let optop = match tok.token {
-                Token::Minus => Some(BinaryOp::Subtraction),
-                Token::Plus => Some(BinaryOp::Addition),
-                _ => None,
-            };
-            if let Some(op) = optop {
-                self.next(); // consume
-                let next_term = self.parse_multiplicative_expression()?;
-                term = Expression::BinaryOp(op, Box::new(term), Box::new(next_term));
-            } else {
-                break;
-            }
-        }
-        Ok(term)
+        self.parse_binary_expression(parse_term, token_to_additive_op)
     }
 
     fn parse_shift_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut adexpr = self.parse_additive_expression()?;
+        let parse_addexpr = |parser: &mut Parser| parser.parse_additive_expression();
+        let token_to_shift_op = |tok| match tok {
+            Token::LeftShift => Some(BinaryOp::LeftShift),
+            Token::RightShift => Some(BinaryOp::RightShift),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            let optop = match tok.token {
-                Token::LeftShift => Some(BinaryOp::LeftShift),
-                Token::RightShift => Some(BinaryOp::RightShift),
-                _ => None,
-            };
-            if let Some(op) = optop {
-                self.next(); // consume
-                let next_adexpr = self.parse_additive_expression()?;
-                adexpr = Expression::BinaryOp(op, Box::new(adexpr), Box::new(next_adexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(adexpr)
+        self.parse_binary_expression(parse_addexpr, token_to_shift_op)
     }
 
     fn parse_relational_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut shiftexpr = self.parse_shift_expression()?;
+        let parse_shiftexpr = |parser: &mut Parser| parser.parse_shift_expression();
+        let token_to_relational_op = |tok| match tok {
+            Token::Greater => Some(BinaryOp::Greater),
+            Token::Less => Some(BinaryOp::Less),
+            Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
+            Token::LessEqual => Some(BinaryOp::LessEqual),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            let optop = match tok.token {
-                Token::Greater => Some(BinaryOp::Greater),
-                Token::Less => Some(BinaryOp::Less),
-                Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
-                Token::LessEqual => Some(BinaryOp::LessEqual),
-                _ => None,
-            };
-            if let Some(op) = optop {
-                self.next(); // consume
-                let next_shiftexpr = self.parse_shift_expression()?;
-                shiftexpr = Expression::BinaryOp(op, Box::new(shiftexpr), Box::new(next_shiftexpr));
-            } else {
-                break;
-            }
-        }
-
-        Ok(shiftexpr)
+        self.parse_binary_expression(parse_shiftexpr, token_to_relational_op)
     }
 
     fn parse_equality_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut relexpr = self.parse_relational_expression()?;
+        let parse_relexpr = |parser: &mut Parser| parser.parse_relational_expression();
+        let token_to_equality_op = |tok| match tok {
+            Token::Equal => Some(BinaryOp::Equal),
+            Token::NotEqual => Some(BinaryOp::NotEqual),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            let optop = match tok.token {
-                Token::Equal => Some(BinaryOp::Equal),
-                Token::NotEqual => Some(BinaryOp::NotEqual),
-                _ => None,
-            };
-            if let Some(op) = optop {
-                self.next(); // consume
-                let next_relexpr = self.parse_relational_expression()?;
-                relexpr = Expression::BinaryOp(op, Box::new(relexpr), Box::new(next_relexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(relexpr)
+        self.parse_binary_expression(parse_relexpr, token_to_equality_op)
     }
 
     fn parse_bitwise_and_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut eqexpr = self.parse_equality_expression()?;
+        let parse_eqexpr = |parser: &mut Parser| parser.parse_equality_expression();
+        let token_to_bitwise_and_op = |tok| match tok {
+            Token::BitwiseAnd => Some(BinaryOp::BitwiseAnd),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            if let Token::BitwiseAnd = tok.token {
-                self.next(); // consume
-                let next_eqexpr = self.parse_equality_expression()?;
-                eqexpr = Expression::BinaryOp(BinaryOp::BitwiseAnd, Box::new(eqexpr), Box::new(next_eqexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(eqexpr)
+        self.parse_binary_expression(parse_eqexpr, token_to_bitwise_and_op)
     }
 
     fn parse_bitwise_xor_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut bandexpr = self.parse_bitwise_and_expression()?;
+        let parse_bitandexpr = |parser: &mut Parser| parser.parse_bitwise_and_expression();
+        let token_to_bitwise_xor_op = |tok| match tok {
+            Token::BitwiseXor => Some(BinaryOp::BitwiseXor),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            if let Token::BitwiseXor = tok.token {
-                self.next(); // consume
-                let next_bandexpr = self.parse_bitwise_and_expression()?;
-                bandexpr = Expression::BinaryOp(BinaryOp::BitwiseXor, Box::new(bandexpr), Box::new(next_bandexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(bandexpr)
+        self.parse_binary_expression(parse_bitandexpr, token_to_bitwise_xor_op)
     }
 
     fn parse_bitwise_or_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut bxorexpr = self.parse_bitwise_xor_expression()?;
+        let parse_bitxorexpr = |parser: &mut Parser| parser.parse_bitwise_xor_expression();
+        let token_to_bitwise_or_op = |tok| match tok {
+            Token::BitwiseOr => Some(BinaryOp::BitwiseOr),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            if let Token::BitwiseOr = tok.token {
-                self.next(); // consume
-                let next_bxorexpr = self.parse_bitwise_xor_expression()?;
-                bxorexpr = Expression::BinaryOp(BinaryOp::BitwiseOr, Box::new(bxorexpr), Box::new(next_bxorexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(bxorexpr)
+        self.parse_binary_expression(parse_bitxorexpr, token_to_bitwise_or_op)
     }
 
     fn parse_logical_and_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut borexpr = self.parse_bitwise_or_expression()?;
+        let parse_bitorexpr = |parser: &mut Parser| parser.parse_bitwise_or_expression();
+        let token_to_logical_and_op = |tok| match tok {
+            Token::LogicalAnd => Some(BinaryOp::LogicalAnd),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            if let Token::LogicalAnd = tok.token {
-                self.next(); // consume
-                let next_borexpr = self.parse_bitwise_or_expression()?;
-                borexpr = Expression::BinaryOp(BinaryOp::LogicalAnd, Box::new(borexpr), Box::new(next_borexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(borexpr)
+        self.parse_binary_expression(parse_bitorexpr, token_to_logical_and_op)
     }
 
     fn parse_logical_or_expression(&mut self) -> Result<Expression, ParseError> {
-        let mut laexpr = self.parse_logical_and_expression()?;
+        let parse_logandexpr = |parser: &mut Parser| parser.parse_logical_and_expression();
+        let token_to_logical_or_op = |tok| match tok {
+            Token::LogicalOr => Some(BinaryOp::LogicalOr),
+            _ => None,
+        };
 
-        while let Some(tok) = self.peek() {
-            if let Token::LogicalOr = tok.token {
-                self.next(); // consume
-                let next_laexpr = self.parse_logical_and_expression()?;
-                laexpr = Expression::BinaryOp(BinaryOp::LogicalOr, Box::new(laexpr), Box::new(next_laexpr));
-            } else {
-                break;
-            }
-        }
-        Ok(laexpr)
+        self.parse_binary_expression(parse_logandexpr, token_to_logical_or_op)
     }
 
     fn parse_conditional_expression(&mut self) -> Result<Expression, ParseError> {
