@@ -77,6 +77,20 @@ impl Parser<'_> {
         self.parse_program()
     }
 
+    fn assert_next_token(&mut self, matches: impl Fn(&Token) -> bool, msg: &str) -> Result<(), ParseError> {
+        let tok = self.next().unwrap();
+        if matches(&tok.token) {
+            Ok(())
+        } else {
+            Err(mkperr(tok, msg))
+        }
+    }
+
+    fn ensure_semicolon(&mut self, msg: &str) -> Result<(), ParseError> {
+        // ensure last token is a semicolon
+        self.assert_next_token(|t| matches!(t, Token::Semicolon), &format!("{}. Expected a final semicolon", msg))
+    }
+
     fn parse_postfix_expression(&mut self) -> Result<Expression, ParseError> {
         let tok = self.next().unwrap();
         match tok.token {
@@ -307,11 +321,7 @@ impl Parser<'_> {
 
             let ifexpr = self.parse_expression()?;
 
-            let tok = self.next().unwrap();
-            if let Token::Colon = tok.token {
-            } else {
-                return Err(mkperr(tok, "Invalid conditional expression. Expected a colon"));
-            }
+            self.assert_next_token(|t| matches!(t, Token::Colon), "Invalid conditional statement. Expected ':'")?;
 
             let elseexpr = self.parse_conditional_expression()?;
 
@@ -349,23 +359,9 @@ impl Parser<'_> {
         self.parse_conditional_expression()
     }
 
-    fn ensure_semicolon(&mut self, msg: &str) -> Result<(), ParseError> {
-        // ensure last token is a semicolon
-        let tok = self.next().unwrap();
-        if let Token::Semicolon = tok.token {
-            Ok(())
-        } else {
-            Err(mkperr(tok, &format!("{}. Expected a final semicolon", msg)))
-        }
-    }
-
     fn parse_compound_statement(&mut self) -> Result<CompoundStatement, ParseError> {
         // ensure next token is '{'
-        let tok = self.next().unwrap();
-        if let Token::Lbrace = tok.token {
-        } else {
-            return Err(mkperr(tok, "Invalid compound statement. Expected '{{'"));
-        }
+        self.assert_next_token(|t| matches!(t, Token::Lbrace), "Invalid compound statement. Expected '{{'")?;
 
         // parse block items
         let mut block_items = Vec::new();
@@ -411,20 +407,15 @@ impl Parser<'_> {
                 self.next(); // consume
 
                 // ensure next token is '('
-                let mut tok = self.next().unwrap();
-                if let Token::Lparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid if statement. Expected '('"));
-                }
+                self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid if statement. Expected '('")?;
 
                 let cond_expr = self.parse_expression()?;
 
                 // ensure next token is ')'
-                tok = self.next().unwrap();
-                if let Token::Rparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid if statement. Expected ')' after condition expression"));
-                }
+                self.assert_next_token(
+                    |t| matches!(t, Token::Rparen),
+                    "Invalid if statement. Expected ')' after condition expression",
+                )?;
 
                 let if_stmnt = self.parse_statement()?;
 
@@ -442,20 +433,15 @@ impl Parser<'_> {
                 self.next(); // consume
 
                 // ensure next token is '('
-                let mut tok = self.next().unwrap();
-                if let Token::Lparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid while statement. Expected '('"));
-                }
+                self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid while statement. Expected '('")?;
 
                 let cond_expr = self.parse_expression()?;
 
                 // ensure next token is ')'
-                tok = self.next().unwrap();
-                if let Token::Rparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid while statement. Expected ')' after condition expression"));
-                }
+                self.assert_next_token(
+                    |t| matches!(t, Token::Rparen),
+                    "Invalid while statement. Expected ')' after condition expression",
+                )?;
 
                 let body = self.parse_statement()?;
 
@@ -467,27 +453,21 @@ impl Parser<'_> {
                 let body = self.parse_statement()?;
 
                 // ensure next token is 'while'
-                let mut tok = self.next().unwrap();
-                if let Token::Keyword(Keyword::While) = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid do-while statement. Expected 'while'"));
-                }
+                self.assert_next_token(
+                    |t| matches!(t, Token::Keyword(Keyword::While)),
+                    "Invalid do-while statement. Expected 'while'",
+                )?;
 
                 // ensure next token is '('
-                tok = self.next().unwrap();
-                if let Token::Lparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid do-while statement. Expected '('"));
-                }
+                self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid do-while statement. Expected '('")?;
 
                 let cond_expr = self.parse_expression()?;
 
                 // ensure next token is ')'
-                tok = self.next().unwrap();
-                if let Token::Rparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid do-while statement. Expected ')' after condition expression"));
-                }
+                self.assert_next_token(
+                    |t| matches!(t, Token::Rparen),
+                    "Invalid do-while statement. Expected ')' after condition expression",
+                )?;
 
                 self.ensure_semicolon("Invalid do-while statement")?;
 
@@ -497,16 +477,12 @@ impl Parser<'_> {
                 self.next(); // consume
 
                 // ensure next token is '('
-                let mut tok = self.next().unwrap();
-                if let Token::Lparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid For/ForDecl statement. Expected '('"));
-                }
+                self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid For/ForDecl statement. Expected '('")?;
 
                 let mut init_decl: Option<Declaration> = None;
                 let mut init_expr: Option<Expression> = None;
 
-                tok = self.peek().unwrap();
+                let tok = self.peek().unwrap();
                 match tok.token {
                     Token::Keyword(Keyword::Int) => {
                         init_decl = Some(self.parse_declaration()?);
@@ -539,11 +515,10 @@ impl Parser<'_> {
                 };
 
                 // ensure next token is ')'
-                let tok = self.next().unwrap();
-                if let Token::Rparen = tok.token {
-                } else {
-                    return Err(mkperr(tok, "Invalid forDecl statement. Expected ')' after post expression"));
-                }
+                self.assert_next_token(
+                    |t| matches!(t, Token::Rparen),
+                    "Invalid For/ForDecl statement. Expected ')' after post expression",
+                )?;
 
                 let body = self.parse_statement()?;
 
@@ -572,11 +547,10 @@ impl Parser<'_> {
 
     fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
         // ensure we got a type (i.e. 'int')
-        let tok = self.next().unwrap();
-        if let Token::Keyword(Keyword::Int) = tok.token {
-        } else {
-            return Err(mkperr(tok, "Invalid declaration. Expected type specifier"));
-        }
+        self.assert_next_token(
+            |t| matches!(t, Token::Keyword(Keyword::Int)),
+            "Invalid declaration. Expected type specifier",
+        )?;
 
         let mut tok = self.next().unwrap();
         let id = match tok.token {
@@ -620,15 +594,13 @@ impl Parser<'_> {
 
     fn parse_function(&mut self) -> Result<Function, ParseError> {
         // ensure first token is an Int keyword
-        let mut tok = self.next().unwrap();
-
-        if let Token::Keyword(Keyword::Int) = tok.token {
-        } else {
-            return Err(mkperr(tok, "Invalid function definition. Expected return type"));
-        }
+        self.assert_next_token(
+            |t| matches!(t, Token::Keyword(Keyword::Int)),
+            "Invalid function definition. Expected return type",
+        )?;
 
         // next token should be an identifier
-        tok = self.next().unwrap();
+        let tok = self.next().unwrap();
         let function_name = match tok.token {
             Token::Identifier(ident) => ident,
             _ => {
@@ -637,27 +609,13 @@ impl Parser<'_> {
         };
 
         // ensure next token is '('
-        tok = self.next().unwrap();
-        if let Token::Lparen = tok.token {
-        } else {
-            return Err(mkperr(tok, "Invalid function definition. Expected '('"));
-        }
+        self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid function definition. Expected '('")?;
 
         // ensure next token is ')'
-        tok = self.next().unwrap();
-        if let Token::Rparen = tok.token {
-        } else {
-            return Err(mkperr(tok, "Invalid function definition. Expected ')'"));
-        }
+        self.assert_next_token(|t| matches!(t, Token::Rparen), "Invalid function definition. Expected ')'")?;
 
         // parse body
         let body = self.parse_compound_statement()?;
-
-        // ensure next token is '{'
-        // return Err(mkperr(tok, "Invalid function definition. Expected '{{'"));
-
-        // // ensure next token is '}'
-        //     return Err(mkperr(tok, "Invalid function definition. Expected '}}'"));
 
         Ok(Function::Func(function_name, body))
     }
