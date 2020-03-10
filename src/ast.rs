@@ -58,6 +58,7 @@ pub enum Expression {
     Constant(i64),
     Variable(String),
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+    FunctionCall(String, Vec<Expression>),
 }
 
 #[derive(Debug)]
@@ -94,12 +95,13 @@ pub enum BlockItem {
 
 #[derive(Debug)]
 pub enum Function {
-    Func(String, CompoundStatement),
+    Declaration(String, Vec<String>),
+    Definition(String, Vec<String>, CompoundStatement),
 }
 
 #[derive(Debug)]
 pub enum Program {
-    Prog(Function),
+    Prog(Vec<Function>),
 }
 
 fn print_expression(expr: &Expression, lvl: i32) {
@@ -137,6 +139,13 @@ fn print_expression(expr: &Expression, lvl: i32) {
             print_expression(condexpr, lvl + 1);
             print_expression(ifexpr, lvl + 1);
             print_expression(elseexpr, lvl + 1);
+            println!("{:<1$}}}", "", (lvl * 2) as usize);
+        }
+        Expression::FunctionCall(id, arguments) => {
+            println!("{:<1$}FunctionCall {2} {{", "", (lvl * 2) as usize, id);
+            for arg in arguments {
+                print_expression(arg, lvl + 1);
+            }
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
     }
@@ -264,12 +273,27 @@ fn print_block_item(bkitem: &BlockItem, lvl: i32) {
     }
 }
 
+fn print_function(func: &Function, lvl: i32) {
+    match func {
+        Function::Declaration(id, parameters) => {
+            let parameter_string = parameters.join(", ");
+            println!("{: <1$}FunctionDeclaration {2} ({3})", "", (lvl * 2) as usize, id, parameter_string);
+        }
+        Function::Definition(id, parameters, body) => {
+            let parameter_string = parameters.join(", ");
+            print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_string);
+            print_compound_statement(body, lvl + 1);
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
+        }
+    }
+}
+
 pub fn print_program(prog: &Program) {
     let lvl = 0;
     println!("Program {{");
-    let Program::Prog(Function::Func(name, comp_stmt)) = prog;
-    println!("  Function \"{}\" {{", name);
-    print_compound_statement(comp_stmt, lvl + 2);
-    println!("  }}");
+    let Program::Prog(funcs) = prog;
+    for f in funcs {
+        print_function(f, lvl + 1);
+    }
     println!("}}");
 }

@@ -96,11 +96,8 @@ impl Parser<'_> {
         match tok.token {
             Token::Lparen => {
                 let subexpr = self.parse_expression()?;
-                let tok = self.next().unwrap();
-                match tok.token {
-                    Token::Rparen => Ok(subexpr),
-                    _ => Err(mkperr(tok, "Missing closing parenthesis after expression")),
-                }
+                self.assert_next_token(|t| matches!(t, Token::Rparen), "Missing closing parenthesis after expression")?;
+                Ok(subexpr)
             }
             Token::Identifier(id) => {
                 match self.peek().unwrap().token {
@@ -111,6 +108,31 @@ impl Parser<'_> {
                     Token::Decrement => {
                         self.next(); // consume
                         Ok(Expression::PostfixOp(FixOp::Dec, id))
+                    }
+                    Token::Lparen => {
+                        self.next(); // consume
+
+                        let mut args = Vec::new();
+
+                        if !matches!(self.peek().unwrap().token, Token::Rparen) {
+                            loop {
+                                args.push(self.parse_expression()?);
+
+                                match self.peek().unwrap().token {
+                                    Token::Comma => {
+                                        self.next();
+                                    } // consume
+                                    _ => break,
+                                }
+                            }
+                        }
+
+                        self.assert_next_token(
+                            |t| matches!(t, Token::Rparen),
+                            "Missing closing parenthesis function arguments",
+                        )?;
+
+                        Ok(Expression::FunctionCall(id, args))
                     }
                     _ => Ok(Expression::Variable(id)),
                 }
@@ -596,7 +618,7 @@ impl Parser<'_> {
         // ensure first token is an Int keyword
         self.assert_next_token(
             |t| matches!(t, Token::Keyword(Keyword::Int)),
-            "Invalid function definition. Expected return type",
+            "Invalid function declarator. Expected return type",
         )?;
 
         // next token should be an identifier
@@ -604,29 +626,66 @@ impl Parser<'_> {
         let function_name = match tok.token {
             Token::Identifier(ident) => ident,
             _ => {
-                return Err(mkperr(tok, "Invalid function definition. Expected identifier"));
+                return Err(mkperr(tok, "Invalid function declarator. Expected identifier for function name"));
             }
         };
 
         // ensure next token is '('
-        self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid function definition. Expected '('")?;
+        self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid function declarator. Expected '('")?;
+
+        // parse the parameter ids
+        let mut parameter_list = Vec::new();
+
+        if let Token::Keyword(Keyword::Int) = self.peek().unwrap().token {
+            self.next(); // consume parameter type (int)
+
+            // read parameter id
+            let tok = self.next().unwrap();
+            match tok.token {
+                Token::Identifier(id) => parameter_list.push(id),
+                _ => return Err(mkperr(tok, "Invalid function declarator. Expected identifier")),
+            }
+
+            while let Token::Comma = self.peek().unwrap().token {
+                self.next(); // consume comma
+
+                // ensure next token is 'int'
+                self.assert_next_token(
+                    |t| matches!(t, Token::Keyword(Keyword::Int)),
+                    "Invalid function declarator. Expected type after comma",
+                )?;
+
+                let tok = self.next().unwrap();
+                match tok.token {
+                    Token::Identifier(id) => {
+                        parameter_list.push(id);
+                    }
+                    _ => {
+                        return Err(mkperr(tok, "Invalid function parameter list. Expected identifier after type"));
+                    }
+                }
+            }
+        }
 
         // ensure next token is ')'
-        self.assert_next_token(|t| matches!(t, Token::Rparen), "Invalid function definition. Expected ')'")?;
+        self.assert_next_token(|t| matches!(t, Token::Rparen), "Invalid function declarator. Expected ')'")?;
 
-        // parse body
-        let body = self.parse_compound_statement()?;
+        if let Token::Semicolon = self.peek().unwrap().token {
+            self.next(); // consume semicolon
+            Ok(Function::Declaration(function_name, parameter_list))
+        } else {
+            // parse body
+            let body = self.parse_compound_statement()?;
 
-        Ok(Function::Func(function_name, body))
+            Ok(Function::Definition(function_name, parameter_list, body))
+        }
     }
 
     fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let main = self.parse_function()?;
-
-        if let Some(t) = self.next() {
-            Err(mkperr(t, "Stray token at end of program"))
-        } else {
-            Ok(Program::Prog(main))
+        let mut functions = Vec::new();
+        while let Some(_) = self.peek() {
+            functions.push(self.parse_function()?);
         }
+        Ok(Program::Prog(functions))
     }
 }

@@ -364,6 +364,7 @@ impl Generator {
                 self.generate_expression_code(elseexpr);
                 self.emit(CodeLine::lbl(&end));
             }
+            Expression::FunctionCall(id, args) => {}
         }
     }
 
@@ -552,21 +553,26 @@ impl Generator {
     }
 
     fn generate_function_code(&mut self, func: Function) {
-        let Function::Func(name, body) = func;
+        match func {
+            Function::Declaration(name, parameters) => {}
+            Function::Definition(name, parameters, body) => {
+                self.emit(CodeLine::i2(".globl", &name));
+                self.emit(CodeLine::lbl(&name));
+                self.emit(CodeLine::i2("push", &self.regbp));
+                self.emit(CodeLine::i3("mov", &self.regsp, &self.regbp));
+                self.generate_compound_statement(&body);
 
-        self.emit(CodeLine::i2(".globl", &name));
-        self.emit(CodeLine::lbl(&name));
-        self.emit(CodeLine::i2("push", &self.regbp));
-        self.emit(CodeLine::i3("mov", &self.regsp, &self.regbp));
-        self.generate_compound_statement(&body);
-
-        if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
-            self.generate_statement_code(&Statement::Return(Expression::Constant(0)));
+                if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
+                    self.generate_statement_code(&Statement::Return(Expression::Constant(0)));
+                }
+            }
         }
     }
 
     pub fn generate_program_code(&mut self, prog: Program) {
-        let Program::Prog(func) = prog;
-        self.generate_function_code(func);
+        let Program::Prog(funcs) = prog;
+        for func in funcs {
+            self.generate_function_code(func);
+        }
     }
 }

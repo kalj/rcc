@@ -24,6 +24,7 @@ pub enum Keyword {
 pub enum Token {
     Assignment,
     Semicolon,
+    Comma,
     Lparen,
     Rparen,
     Lbrace,
@@ -90,6 +91,7 @@ fn token_to_str(tok: &Token) -> String {
         Token::Lbrace => "{".to_string(),
         Token::Rbrace => "}".to_string(),
         Token::Semicolon => ";".to_string(),
+        Token::Comma => ",".to_string(),
         Token::Multiplication => "*".to_string(),
         Token::Division => "/".to_string(),
         Token::Remainder => "%".to_string(),
@@ -192,6 +194,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Decrement,
         // patterns of length 1
         Token::Semicolon,
+        Token::Comma,
         Token::Lparen,
         Token::Rparen,
         Token::Lbrace,
