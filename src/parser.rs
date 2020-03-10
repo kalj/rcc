@@ -45,7 +45,7 @@ pub struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    pub fn new(tokens: &[TokNLoc]) -> Parser {
+    fn new(tokens: &[TokNLoc]) -> Parser {
         Parser { tokiter: itertools::multipeek(tokens.iter()) }
     }
 
@@ -71,10 +71,6 @@ impl Parser<'_> {
 
     fn peek(&mut self) -> Option<TokNLoc> {
         self.peek_n(1)
-    }
-
-    pub fn parse(&mut self) -> Result<Program, ParseError> {
-        self.parse_program()
     }
 
     fn assert_next_token(&mut self, matches: impl Fn(&Token) -> bool, msg: &str) -> Result<(), ParseError> {
@@ -687,4 +683,9 @@ impl Parser<'_> {
         }
         Ok(Program::Prog(functions))
     }
+}
+
+pub fn parse(tokens: &[TokNLoc]) -> Result<Program, ParseError> {
+    let mut parser = Parser::new(tokens);
+    parser.parse_program()
 }

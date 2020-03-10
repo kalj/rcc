@@ -13,7 +13,7 @@ mod ast;
 use ast::print_program;
 
 mod parser;
-use parser::Parser;
+use parser::parse;
 
 mod validation;
 use validation::validate;
@@ -106,7 +106,7 @@ fn main() {
         println!("{}", tokenstrs.join(" "));
     }
 
-    let program = match Parser::new(&tokens).parse() {
+    let program = match parse(&tokens) {
         Ok(prog) => prog,
         Err(err) => {
             let error_message = format!("ParseError: {}", err.message);
