@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, CompoundStatement, Declaration, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
 
 //===================================================================
 // Code generation
@@ -531,7 +531,14 @@ impl Generator {
 
                 self.restore_loop_context(old_loop_ctx);
             }
-            Statement::Compound(comp) => self.generate_compound_statement(comp),
+            Statement::Compound(bkitems) => {
+                let old_scope = self.new_scope();
+
+                self.generate_block_items(bkitems);
+
+                // restore old scope
+                self.restore_scope(old_scope);
+            }
         }
     }
 
@@ -542,15 +549,10 @@ impl Generator {
         }
     }
 
-    fn generate_compound_statement(&mut self, comp: &CompoundStatement) {
-        let old_scope = self.new_scope();
-
-        for bkitem in &comp.block_items {
+    fn generate_block_items(&mut self, block_items: &Vec<BlockItem>) {
+        for bkitem in block_items {
             self.generate_block_item_code(bkitem);
         }
-
-        // restore old scope
-        self.restore_scope(old_scope);
     }
 
     fn generate_function_code(&mut self, func: Function) {
@@ -561,7 +563,13 @@ impl Generator {
                 self.emit(CodeLine::lbl(&name));
                 self.emit(CodeLine::i2("push", &self.regbp));
                 self.emit(CodeLine::i3("mov", &self.regsp, &self.regbp));
-                self.generate_compound_statement(&body);
+
+                let old_scope = self.new_scope();
+
+                self.generate_block_items(&body);
+
+                // restore old scope
+                self.restore_scope(old_scope);
 
                 if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
                     self.generate_statement_code(&Statement::Return(Expression::Constant(0)));

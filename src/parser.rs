@@ -6,7 +6,7 @@ use std::error;
 use std::fmt;
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, CompoundStatement, Declaration, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
 
 //===================================================================
 // Parsing
@@ -381,7 +381,7 @@ impl Parser<'_> {
         self.parse_conditional_expression()
     }
 
-    fn parse_compound_statement(&mut self) -> Result<CompoundStatement, ParseError> {
+    fn parse_compound_statement(&mut self) -> Result<Vec<BlockItem>, ParseError> {
         // ensure next token is '{'
         self.assert_next_token(|t| matches!(t, Token::Lbrace), "Invalid compound statement. Expected '{{'")?;
 
@@ -399,7 +399,7 @@ impl Parser<'_> {
         // simply consume
         self.next();
 
-        Ok(CompoundStatement { block_items })
+        Ok(block_items)
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {

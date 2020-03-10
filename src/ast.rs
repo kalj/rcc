@@ -62,11 +62,6 @@ pub enum Expression {
 }
 
 #[derive(Debug)]
-pub struct CompoundStatement {
-    pub block_items: Vec<BlockItem>,
-}
-
-#[derive(Debug)]
 pub struct Declaration {
     pub id: String,
     pub init: Option<Expression>,
@@ -78,7 +73,7 @@ pub enum Statement {
     Return(Expression),
     Expr(Expression),
     If(Expression, Box<Statement>, Option<Box<Statement>>),
-    Compound(CompoundStatement),
+    Compound(Vec<BlockItem>),
     For(Option<Expression>, Expression, Option<Expression>, Box<Statement>),
     ForDecl(Declaration, Expression, Option<Expression>, Box<Statement>),
     While(Expression, Box<Statement>),
@@ -96,7 +91,7 @@ pub enum BlockItem {
 #[derive(Debug)]
 pub enum Function {
     Declaration(String, Vec<String>),
-    Definition(String, Vec<String>, CompoundStatement),
+    Definition(String, Vec<String>, Vec<BlockItem>),
 }
 
 #[derive(Debug)]
@@ -151,12 +146,10 @@ fn print_expression(expr: &Expression, lvl: i32) {
     }
 }
 
-fn print_compound_statement(comp: &CompoundStatement, lvl: i32) {
-    println!("{: <1$}Compound {{", "", (lvl * 2) as usize);
-    for bkitem in &comp.block_items {
+fn print_block_items(bkitems: &Vec<BlockItem>, lvl: i32) {
+    for bkitem in bkitems {
         print_block_item(bkitem, lvl + 1);
     }
-    println!("{: <1$}}}", "", (lvl * 2) as usize);
 }
 
 fn print_statement(stmt: &Statement, lvl: i32) {
@@ -187,8 +180,12 @@ fn print_statement(stmt: &Statement, lvl: i32) {
                 println!("{: <1$}}}", "", (lvl * 2) as usize);
             }
         }
-        Statement::Compound(comp_stmt) => {
-            print_compound_statement(comp_stmt, lvl);
+        Statement::Compound(bkitems) => {
+            println!("{: <1$}Compound {{", "", (lvl * 2) as usize);
+
+            print_block_items(bkitems, lvl + 1);
+
+            println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
         Statement::While(cond, body) => {
             println!("{: <1$}While {{", "", (lvl * 2) as usize);
@@ -282,7 +279,11 @@ fn print_function(func: &Function, lvl: i32) {
         Function::Definition(id, parameters, body) => {
             let parameter_string = parameters.join(", ");
             print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_string);
-            print_compound_statement(body, lvl + 1);
+
+            println!("  {: <1$}Body {{", "", (lvl * 2) as usize);
+            print_block_items(body, lvl + 2);
+            println!("  {: <1$}}}", "", (lvl * 2) as usize);
+
             println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
     }
