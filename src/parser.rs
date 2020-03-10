@@ -14,19 +14,20 @@ use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statemen
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
-    pub cursor: usize,
+    pub position: usize,
+    pub length: usize,
     pub message: String,
 }
 
 impl ParseError {
-    fn new(cursor: usize, message: String) -> ParseError {
-        ParseError { cursor, message }
+    fn new(position: usize, length: usize, message: String) -> ParseError {
+        ParseError { position, length, message }
     }
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ParseError {}: {}", self.cursor, self.message)
+        write!(f, "ParseError {}: {}", self.position, self.message)
     }
 }
 
@@ -37,7 +38,7 @@ impl error::Error for ParseError {
 }
 
 fn mkperr(tok: TokNLoc, msg: &str) -> ParseError {
-    ParseError { cursor: tok.location, message: format!("{}, got '{}'.", msg, tok.token) }
+    ParseError::new(tok.location, tok.length, format!("{}, got '{}'.", msg, tok.token))
 }
 
 pub struct Parser<'a> {
@@ -164,33 +165,25 @@ impl Parser<'_> {
             Token::Increment => {
                 self.next(); // consume
 
-                let next_loc = self.peek().unwrap().location; // for mkperr message
+                let next_tok = self.peek().unwrap(); // for mkperr message
 
                 let operand = self.parse_postfix_expression()?;
                 if let Expression::Variable(id) = operand {
                     Ok(Expression::PrefixOp(FixOp::Inc, id))
                 } else {
-                    Err(ParseError::new(
-                        next_loc,
-                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
-                            .to_string(),
-                    ))
+                    Err(mkperr(next_tok, "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"))
                 }
             }
             Token::Decrement => {
                 self.next(); // consume
 
-                let next_loc = self.peek().unwrap().location; // for mkperr message
+                let next_tok = self.peek().unwrap(); // for mkperr message
 
                 let operand = self.parse_postfix_expression()?;
                 if let Expression::Variable(id) = operand {
                     Ok(Expression::PrefixOp(FixOp::Dec, id))
                 } else {
-                    Err(ParseError::new(
-                        next_loc,
-                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"
-                            .to_string(),
-                    ))
+                    Err(mkperr(next_tok, "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"))
                 }
             }
             _ => self.parse_postfix_expression(),

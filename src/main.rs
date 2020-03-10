@@ -21,7 +21,7 @@ use validation::validate;
 mod codegen;
 use codegen::generate_code;
 
-fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &str) {
+fn print_error_message(source: &str, source_path: &Path, position: usize, length: usize, msg: &str) {
     let mut line_starts = Vec::new();
     line_starts.push(0 as usize);
 
@@ -32,14 +32,14 @@ fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &st
 
     line_starts.push(source.len()); // put the end of file last
 
-    let row = line_starts.iter().rposition(|ls| ls <= &cursor).unwrap();
-    let col = cursor - line_starts[row];
+    let row = line_starts.iter().rposition(|ls| ls <= &position).unwrap();
+    let col = position - line_starts[row];
     let rowstart = line_starts[row];
     let rowend = line_starts[row + 1];
 
     println!("{}:{}:{}:{}", source_path.display(), row, col, msg);
-    println!("{}", &source[rowstart..rowend]);
-    println!("{:<1$}^", "", col);
+    println!("{}", source[rowstart..rowend].trim_end());
+    println!("{:<1$}{2}", "", col, "^".repeat(length));
 }
 
 fn main() {
@@ -95,7 +95,7 @@ fn main() {
     let tokens = match tokenize(&source) {
         Ok(t) => t,
         Err(err) => {
-            print_error_message(&source, source_path, err.cursor, "Unknown token");
+            print_error_message(&source, source_path, err.cursor, 1, "Unknown token");
             std::process::exit(1);
         }
     };
@@ -110,7 +110,7 @@ fn main() {
         Ok(prog) => prog,
         Err(err) => {
             let error_message = format!("ParseError: {}", err.message);
-            print_error_message(&source, &source_path, err.cursor, &error_message);
+            print_error_message(&source, &source_path, err.position, err.length, &error_message);
             std::process::exit(1);
         }
     };
