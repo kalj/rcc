@@ -77,10 +77,19 @@ impl VarMap {
         self.block_decl_set.contains(name)
     }
 
-    fn insert(&mut self, name: &str) {
+    fn insert_local(&mut self, name: &str) {
         self.addr_map.insert(name.to_string(), self.stack_index);
         self.stack_index -= self.regsize as i32;
         self.block_decl_set.insert(name.to_string());
+    }
+
+    fn insert_arg(&mut self, name: &str, idx: i32) {
+        self.addr_map.insert(name.to_string(), idx);
+        self.block_decl_set.insert(name.to_string());
+    }
+
+    fn has(&self, name: &str) -> bool {
+        self.addr_map.contains_key(name)
     }
 
     fn get(&self, name: &str) -> i32 {
@@ -410,7 +419,39 @@ impl Generator {
                 self.generate_expression_code(elseexpr);
                 self.emit(CodeLine::lbl(&end));
             }
-            Expression::FunctionCall(id, args) => {}
+            Expression::FunctionCall(id, args) => {
+                if self.emit_32bit {
+                    // evaluate arguments and push on stack in reverse order
+                    for arg in args.iter().rev() {
+                        self.generate_expression_code(arg);
+                        self.emit(CodeLine::i2("push", &self.reg.ax.n));
+                    }
+
+                    self.emit(CodeLine::i2("call", id));
+                    if !args.is_empty() {
+                        let offset_literal = format!("${}", 4 * args.len());
+                        self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
+                    }
+                } else {
+                    let nargs = args.len();
+
+                    for i in 0..nargs {
+                        let iarg = nargs - 1 - i;
+                        self.generate_expression_code(&args[iarg]);
+                        if iarg >= self.reg.args.len() {
+                            self.emit(CodeLine::i2("push", &self.reg.ax.n));
+                        } else {
+                            self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.args[iarg].n32));
+                        }
+                    }
+
+                    self.emit(CodeLine::i2("call", id));
+                    if args.len() > 6 {
+                        let offset_literal = format!("${}", 8 * (args.len() - 6));
+                        self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
+                    }
+                }
+            }
         }
     }
 
@@ -425,7 +466,7 @@ impl Generator {
             self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n)); //   otherwise initialize %rax with 0
         }
         self.emit(CodeLine::i2("push", &self.reg.ax.n)); //            push value on stack at known index
-        self.var_map.insert(id); //                                    save new variable
+        self.var_map.insert_local(id); //                              save new variable
     }
 
     fn generate_statement_code(&mut self, stmnt: &Statement) {
@@ -611,6 +652,31 @@ impl Generator {
                 self.emit(CodeLine::i3("mov", &self.reg.sp.n, &self.reg.bp.n));
 
                 let old_scope = self.new_scope();
+
+                //add parameters to variable map
+
+                if self.emit_32bit {
+                    // evaluate arguments and push on stack in reverse order
+                    for (i, p) in parameters.iter().enumerate() {
+                        // 4 extra for the stack pointer which will be pushed
+                        let stack_offset = 4 + 4 * (1 + i as i32);
+                        self.var_map.insert_arg(p, stack_offset);
+                    }
+                } else {
+                    let narg_regs = self.reg.args.len();
+
+                    for (i, p) in parameters.iter().enumerate() {
+                        if i < narg_regs {
+                            //  push value on stack at known index
+                            self.emit(CodeLine::i2("push", &self.reg.args[i].n));
+                            self.var_map.insert_local(p); //      save new variable
+                        } else {
+                            // 8 extra for the stack pointer which will be pushed
+                            let stack_offset = 8 + 8 * (1 + i - narg_regs);
+                            self.var_map.insert_arg(p, stack_offset as i32);
+                        }
+                    }
+                }
 
                 self.generate_block_items(&body);
 
