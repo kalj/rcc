@@ -16,7 +16,7 @@ mod parser;
 use parser::Parser;
 
 mod codegen;
-use codegen::Generator;
+use codegen::generate_code;
 
 fn print_error_message(source: &str, source_path: &Path, cursor: usize, msg: &str) {
     let mut line_starts = Vec::new();
@@ -117,8 +117,7 @@ fn main() {
         print_program(&program);
     }
 
-    let mut generator = Generator::new(emit_32bit);
-    generator.generate_program_code(program);
+    let code = generate_code(&program, emit_32bit);
 
-    fs::write(output_path, generator.code.get_str()).expect("Failed writing assembly output");
+    fs::write(output_path, code.get_str()).expect("Failed writing assembly output");
 }

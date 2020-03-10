@@ -94,7 +94,7 @@ struct LoopContext {
 }
 
 pub struct Generator {
-    pub code: Code,
+    code: Code,
     emit_32bit: bool,
     label_counter: i32,
     rega: String,
@@ -555,7 +555,7 @@ impl Generator {
         }
     }
 
-    fn generate_function_code(&mut self, func: Function) {
+    fn generate_function_code(&mut self, func: &Function) {
         match func {
             Function::Declaration(name, parameters) => {}
             Function::Definition(name, parameters, body) => {
@@ -578,10 +578,17 @@ impl Generator {
         }
     }
 
-    pub fn generate_program_code(&mut self, prog: Program) {
+    fn generate_program_code(&mut self, prog: &Program) {
         let Program::Prog(funcs) = prog;
         for func in funcs {
             self.generate_function_code(func);
         }
     }
+}
+
+pub fn generate_code(prog: &Program, emit_32_bit: bool) -> Code {
+    let mut generator = Generator::new(emit_32_bit);
+    generator.generate_program_code(prog);
+
+    generator.code
 }
