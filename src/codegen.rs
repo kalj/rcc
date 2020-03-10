@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use std::error;
+use std::fmt;
 
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
 use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
@@ -6,6 +8,31 @@ use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statemen
 //===================================================================
 // Code generation
 //===================================================================
+
+#[derive(Debug, Clone)]
+pub struct CodegenError {
+    pub position: usize,
+    pub length: usize,
+    pub message: String,
+}
+
+impl CodegenError {
+    fn new(message: String, position: usize, length: usize) -> CodegenError {
+        CodegenError { position, length, message }
+    }
+}
+
+impl fmt::Display for CodegenError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "CodegenError {}: {}", self.position, self.message)
+    }
+}
+
+impl error::Error for CodegenError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        None
+    }
+}
 
 enum CodeLine {
     LabelRef(String),
@@ -287,22 +314,26 @@ impl Generator {
         }
     }
 
-    fn generate_expression_code(&mut self, expr: &Expression) {
+    fn generate_expression_code(&mut self, expr: &Expression) -> Result<(), CodegenError> {
         match expr {
             Expression::Constant(val) => {
                 let literal = format!("${}", val);
                 self.emit(CodeLine::i3("mov", &literal, &self.reg.ax.n32));
             }
             Expression::Variable(id) => {
-                if !self.var_map.has(id) {
-                    panic!("Tried referencing undeclared variable {}.", id);
+                if !self.var_map.has(&id.item) {
+                    return Err(CodegenError::new(
+                        format!("Tried referencing undeclared variable {}.", id.item),
+                        id.position,
+                        id.length,
+                    ));
                 }
 
-                let var_offset = self.var_map.get(id);
+                let var_offset = self.var_map.get(&id.item);
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
             }
             Expression::UnaryOp(uop, expr) => {
-                self.generate_expression_code(expr);
+                self.generate_expression_code(expr)?;
                 match uop {
                     UnaryOp::Negate => {
                         self.emit(CodeLine::i2("neg", &self.reg.ax.n32));
@@ -322,7 +353,7 @@ impl Generator {
                 let cond2 = self.new_label();
                 let end = self.new_label();
 
-                self.generate_expression_code(e1);
+                self.generate_expression_code(e1)?;
                 // if true then just jump over second part and set true
                 // else evaluate second part and set to return status of that
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
@@ -330,7 +361,7 @@ impl Generator {
                 self.emit(CodeLine::i3("mov", "$1", &self.reg.ax.n32)); //           else we are done, so set result to 1,
                 self.emit(CodeLine::i2("jmp", &end)); //                             and jump to end.
                 self.emit(CodeLine::lbl(&cond2));
-                self.generate_expression_code(e2);
+                self.generate_expression_code(e2)?;
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //           zero out EAX without changing ZF
                 self.emit(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
@@ -341,31 +372,39 @@ impl Generator {
                 let cond2 = self.new_label();
                 let end = self.new_label();
 
-                self.generate_expression_code(e1);
+                self.generate_expression_code(e1)?;
                 // if false then just jump over second part and set false
                 // else evaluate second part and set to return status of that
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i2("jne", &cond2)); //                           if ZF is not set, go to cond2
                 self.emit(CodeLine::i2("jmp", &end)); //                             else we are done (and eax is 0), so jump to end.
                 self.emit(CodeLine::lbl(&cond2));
-                self.generate_expression_code(e2);
+                self.generate_expression_code(e2)?;
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //           zero out EAX without changing ZF
                 self.emit(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
                 self.emit(CodeLine::lbl(&end));
             }
             Expression::BinaryOp(bop, e1, e2) => {
-                self.generate_expression_code(e1);
+                self.generate_expression_code(e1)?;
 
                 self.emit(CodeLine::i2("push", &self.reg.ax.n));
-                self.generate_expression_code(e2);
+                self.generate_expression_code(e2)?;
 
                 self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.cx.n32)); // copy arg2 into %ecx
                 self.emit(CodeLine::i2("pop", &self.reg.ax.n)); //                     get arg1 from stack into %eax
                 self.generate_binop_code(bop);
             }
             Expression::PrefixOp(fixop, id) => {
-                let var_offset = self.var_map.get(id);
+                if !self.var_map.has(&id.item) {
+                    return Err(CodegenError::new(
+                        format!("Tried referencing undeclared variable {}.", id.item),
+                        id.position,
+                        id.length,
+                    ));
+                }
+
+                let var_offset = self.var_map.get(&id.item);
                 if let FixOp::Inc = fixop {
                     self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.reg.bp.n)));
                 } else {
@@ -374,7 +413,15 @@ impl Generator {
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
             }
             Expression::PostfixOp(fixop, id) => {
-                let var_offset = self.var_map.get(id);
+                if !self.var_map.has(&id.item) {
+                    return Err(CodegenError::new(
+                        format!("Tried referencing undeclared variable {}.", id.item),
+                        id.position,
+                        id.length,
+                    ));
+                }
+
+                let var_offset = self.var_map.get(&id.item);
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
                 if let FixOp::Inc = fixop {
                     self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.reg.bp.n)));
@@ -383,8 +430,17 @@ impl Generator {
                 }
             }
             Expression::Assign(kind, id, expr) => {
-                self.generate_expression_code(expr);
-                let var_offset = self.var_map.get(id);
+                if !self.var_map.has(&id.item) {
+                    return Err(CodegenError::new(
+                        format!("Tried referencing undeclared variable {}.", id.item),
+                        id.position,
+                        id.length,
+                    ));
+                }
+
+                self.generate_expression_code(expr)?;
+
+                let var_offset = self.var_map.get(&id.item);
 
                 let binop = match kind {
                     AssignmentKind::Write => None,
@@ -413,27 +469,27 @@ impl Generator {
                 let else_case = self.new_label();
                 let end = self.new_label();
 
-                self.generate_expression_code(condexpr);
+                self.generate_expression_code(condexpr)?;
 
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
 
-                self.generate_expression_code(ifexpr); //                            else execute ifexpr
+                self.generate_expression_code(ifexpr)?; //                           else execute ifexpr
                 self.emit(CodeLine::i2("jmp", &end)); //                             then jump to end
 
                 self.emit(CodeLine::lbl(&else_case));
-                self.generate_expression_code(elseexpr);
+                self.generate_expression_code(elseexpr)?;
                 self.emit(CodeLine::lbl(&end));
             }
             Expression::FunctionCall(id, args) => {
                 if self.emit_32bit {
                     // evaluate arguments and push on stack in reverse order
                     for arg in args.iter().rev() {
-                        self.generate_expression_code(arg);
+                        self.generate_expression_code(arg)?;
                         self.emit(CodeLine::i2("push", &self.reg.ax.n));
                     }
 
-                    self.emit(CodeLine::i2("call", id));
+                    self.emit(CodeLine::i2("call", &id.item));
                     if !args.is_empty() {
                         let offset_literal = format!("${}", 4 * args.len());
                         self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
@@ -443,7 +499,7 @@ impl Generator {
 
                     for i in 0..nargs {
                         let iarg = nargs - 1 - i;
-                        self.generate_expression_code(&args[iarg]);
+                        self.generate_expression_code(&args[iarg])?;
                         if iarg >= self.reg.args.len() {
                             self.emit(CodeLine::i2("push", &self.reg.ax.n));
                         } else {
@@ -451,7 +507,7 @@ impl Generator {
                         }
                     }
 
-                    self.emit(CodeLine::i2("call", id));
+                    self.emit(CodeLine::i2("call", &id.item));
                     if args.len() > 6 {
                         let offset_literal = format!("${}", 8 * (args.len() - 6));
                         self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
@@ -459,39 +515,55 @@ impl Generator {
                 }
             }
         }
+        Ok(())
     }
 
-    fn generate_declaration_code(&mut self, decl: &Declaration) {
+    fn generate_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
         let Declaration { id, init } = decl;
-        if self.var_map.block_decl(id) {
-            panic!("Variable {} already declared in block", id);
+        if self.var_map.block_decl(&id.item) {
+            return Err(CodegenError::new(
+                format!("Variable {} already declared in block", id.item),
+                id.position,
+                id.length,
+            ));
         }
         if let Some(expr) = init {
-            self.generate_expression_code(&expr); //                   possibly compute initial value, saved in %rax
+            self.generate_expression_code(&expr)?; //                  possibly compute initial value, saved in %rax
         } else {
             self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n)); //   otherwise initialize %rax with 0
         }
         self.emit(CodeLine::i2("push", &self.reg.ax.n)); //            push value on stack at known index
-        self.var_map.insert_local(id); //                              save new variable
+        self.var_map.insert_local(&id.item); //                        save new variable
+        Ok(())
     }
 
-    fn generate_statement_code(&mut self, stmnt: &Statement) {
+    fn generate_statement_code(&mut self, stmnt: &Statement) -> Result<(), CodegenError> {
         match stmnt {
             Statement::Return(expr) => {
-                self.generate_expression_code(&expr);
+                self.generate_expression_code(&expr)?;
                 self.emit(CodeLine::i3("mov", &self.reg.bp.n, &self.reg.sp.n));
                 self.emit(CodeLine::i2("pop", &self.reg.bp.n));
                 self.emit(CodeLine::i1("ret"));
             }
-            Statement::Break => self.emit(CodeLine::i2(
-                "jmp",
-                &self.loop_ctx.break_lbl.as_ref().expect("Invalid break not inside a loop or switch statement"),
-            )),
-            Statement::Continue => self.emit(CodeLine::i2(
-                "jmp",
-                &self.loop_ctx.continue_lbl.as_ref().expect("Invalid continue not inside a loop"),
-            )),
-            Statement::Expr(expr) => self.generate_expression_code(&expr),
+            Statement::Break => {
+                if let Some(blbl) = &self.loop_ctx.break_lbl {
+                    self.emit(CodeLine::i2("jmp", blbl));
+                } else {
+                    return Err(CodegenError::new(
+                        "Invalid break not inside a loop or switch statement".to_string(),
+                        0,
+                        1,
+                    ));
+                }
+            }
+            Statement::Continue => {
+                if let Some(clbl) = &self.loop_ctx.continue_lbl {
+                    self.emit(CodeLine::i2("jmp", clbl));
+                } else {
+                    return Err(CodegenError::new("Invalid continue not inside a loop".to_string(), 0, 1));
+                }
+            }
+            Statement::Expr(expr) => self.generate_expression_code(&expr)?,
             Statement::Null => {}
             Statement::If(condexpr, ifstmt, maybe_elsestmt) => {
                 if let Some(elsestmt) = maybe_elsestmt {
@@ -499,27 +571,27 @@ impl Generator {
                     let else_case = self.new_label();
                     let end = self.new_label();
 
-                    self.generate_expression_code(&condexpr);
+                    self.generate_expression_code(&condexpr)?;
 
                     self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                     self.emit(CodeLine::i2("je", &else_case)); //                        if ZF is set, go to else_case
 
-                    self.generate_statement_code(ifstmt); //                             else execute ifstmt
+                    self.generate_statement_code(ifstmt)?; //                            else execute ifstmt
                     self.emit(CodeLine::i2("jmp", &end)); //                             then jump to end
 
                     self.emit(CodeLine::lbl(&else_case));
-                    self.generate_statement_code(elsestmt);
+                    self.generate_statement_code(elsestmt)?;
                     self.emit(CodeLine::lbl(&end));
                 } else {
                     // setup label
                     let end = self.new_label();
 
-                    self.generate_expression_code(&condexpr);
+                    self.generate_expression_code(&condexpr)?;
 
                     self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                     self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
 
-                    self.generate_statement_code(ifstmt); //                             else execute ifexpr
+                    self.generate_statement_code(ifstmt)?; //                            else execute ifexpr
 
                     self.emit(CodeLine::lbl(&end));
                 }
@@ -531,12 +603,12 @@ impl Generator {
                 let old_loop_ctx = self.new_loop_context(&end, &start);
 
                 self.emit(CodeLine::lbl(&start));
-                self.generate_expression_code(&cond);
+                self.generate_expression_code(&cond)?;
 
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
 
-                self.generate_statement_code(body); //                               else execute body
+                self.generate_statement_code(body)?; //                              else execute body
                 self.emit(CodeLine::i2("jmp", &start)); //                           and go to next iteration
 
                 self.emit(CodeLine::lbl(&end));
@@ -550,9 +622,10 @@ impl Generator {
 
                 self.emit(CodeLine::lbl(&start));
 
-                self.generate_statement_code(body); //                               execute body
+                // execute body
+                self.generate_statement_code(body)?;
 
-                self.generate_expression_code(&cond);
+                self.generate_expression_code(&cond)?;
 
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           check if false (set ZF if EAX == 0)
                 self.emit(CodeLine::i2("jne", &start)); //                           if true (ZF is not set), go start
@@ -570,20 +643,20 @@ impl Generator {
                 let old_loop_ctx = self.new_loop_context(&end, &cnt);
 
                 if let Some(initexpr) = maybe_initexpr {
-                    self.generate_expression_code(&initexpr);
+                    self.generate_expression_code(&initexpr)?;
                 }
 
                 self.emit(CodeLine::lbl(&start));
-                self.generate_expression_code(&cond);
+                self.generate_expression_code(&cond)?;
 
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
 
-                self.generate_statement_code(body); //                               else execute body
+                self.generate_statement_code(body)?; //                              else execute body
 
                 self.emit(CodeLine::lbl(&cnt)); //                                   jump here from continue in body
                 if let Some(postexpr) = maybe_postexpr {
-                    self.generate_expression_code(&postexpr);
+                    self.generate_expression_code(&postexpr)?;
                 }
 
                 self.emit(CodeLine::i2("jmp", &start)); //                           and go to next iteration
@@ -600,19 +673,19 @@ impl Generator {
 
                 let old_scope = self.new_scope();
 
-                self.generate_declaration_code(&initdecl);
+                self.generate_declaration_code(&initdecl)?;
 
                 self.emit(CodeLine::lbl(&start));
-                self.generate_expression_code(&cond);
+                self.generate_expression_code(&cond)?;
 
                 self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32)); //           set ZF if EAX == 0
                 self.emit(CodeLine::i2("je", &end)); //                              if ZF is set, go to end
 
-                self.generate_statement_code(body); //                               else execute body
+                self.generate_statement_code(body)?; //                              else execute body
 
                 self.emit(CodeLine::lbl(&cnt)); //                                   jump here from continue in body
                 if let Some(postexpr) = maybe_postexpr {
-                    self.generate_expression_code(&postexpr);
+                    self.generate_expression_code(&postexpr)?;
                 }
 
                 self.emit(CodeLine::i2("jmp", &start)); //                           and go to next iteration
@@ -627,33 +700,36 @@ impl Generator {
             Statement::Compound(bkitems) => {
                 let old_scope = self.new_scope();
 
-                self.generate_block_items(bkitems);
+                self.generate_block_items(bkitems)?;
 
                 // restore old scope
                 self.restore_scope(old_scope);
             }
         }
+        Ok(())
     }
 
-    fn generate_block_item_code(&mut self, bkitem: &BlockItem) {
+    fn generate_block_item_code(&mut self, bkitem: &BlockItem) -> Result<(), CodegenError> {
         match bkitem {
-            BlockItem::Decl(decl) => self.generate_declaration_code(decl),
-            BlockItem::Stmt(stmt) => self.generate_statement_code(&stmt),
+            BlockItem::Decl(decl) => self.generate_declaration_code(decl)?,
+            BlockItem::Stmt(stmt) => self.generate_statement_code(&stmt)?,
         }
+        Ok(())
     }
 
-    fn generate_block_items(&mut self, block_items: &[BlockItem]) {
+    fn generate_block_items(&mut self, block_items: &[BlockItem]) -> Result<(), CodegenError> {
         for bkitem in block_items {
-            self.generate_block_item_code(bkitem);
+            self.generate_block_item_code(bkitem)?;
         }
+        Ok(())
     }
 
-    fn generate_function_code(&mut self, func: &Function) {
+    fn generate_function_code(&mut self, func: &Function) -> Result<(), CodegenError> {
         match func {
             Function::Declaration(_, _) => {}
             Function::Definition(name, parameters, body) => {
-                self.emit(CodeLine::i2(".globl", &name));
-                self.emit(CodeLine::lbl(&name));
+                self.emit(CodeLine::i2(".globl", &name.item));
+                self.emit(CodeLine::lbl(&name.item));
                 self.emit(CodeLine::i2("push", &self.reg.bp.n));
                 self.emit(CodeLine::i3("mov", &self.reg.sp.n, &self.reg.bp.n));
 
@@ -666,7 +742,7 @@ impl Generator {
                     for (i, p) in parameters.iter().enumerate() {
                         // 4 extra for the stack pointer which will be pushed
                         let stack_offset = 4 + 4 * (1 + i as i32);
-                        self.var_map.insert_arg(p, stack_offset);
+                        self.var_map.insert_arg(&p.item, stack_offset);
                     }
                 } else {
                     let narg_regs = self.reg.args.len();
@@ -675,38 +751,40 @@ impl Generator {
                         if i < narg_regs {
                             //  push value on stack at known index
                             self.emit(CodeLine::i2("push", &self.reg.args[i].n));
-                            self.var_map.insert_local(p); //      save new variable
+                            self.var_map.insert_local(&p.item); //      save new variable
                         } else {
                             // 8 extra for the stack pointer which will be pushed
                             let stack_offset = 8 + 8 * (1 + i - narg_regs);
-                            self.var_map.insert_arg(p, stack_offset as i32);
+                            self.var_map.insert_arg(&p.item, stack_offset as i32);
                         }
                     }
                 }
 
-                self.generate_block_items(&body);
+                self.generate_block_items(&body)?;
 
                 // restore old scope
                 self.restore_scope(old_scope);
 
                 if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
-                    self.generate_statement_code(&Statement::Return(Expression::Constant(0)));
+                    self.generate_statement_code(&Statement::Return(Expression::Constant(0)))?;
                 }
             }
         }
+        Ok(())
     }
 
-    fn generate_program_code(&mut self, prog: &Program) {
+    fn generate_program_code(&mut self, prog: &Program) -> Result<(), CodegenError> {
         let Program::Prog(funcs) = prog;
         for func in funcs {
-            self.generate_function_code(func);
+            self.generate_function_code(func)?;
         }
+        Ok(())
     }
 }
 
-pub fn generate_code(prog: &Program, emit_32_bit: bool) -> Code {
+pub fn generate_code(prog: &Program, emit_32_bit: bool) -> Result<Code, CodegenError> {
     let mut generator = Generator::new(emit_32_bit);
-    generator.generate_program_code(prog);
+    generator.generate_program_code(prog)?;
 
-    generator.code
+    Ok(generator.code)
 }

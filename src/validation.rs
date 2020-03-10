@@ -1,30 +1,16 @@
-use std::error;
-use std::fmt;
-
+use crate::ast::AstItem;
+use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
 use std::collections::HashMap;
 
-use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
-
-#[derive(Debug, Clone)]
 pub struct ValidationError {
     pub message: String,
+    pub position: usize,
+    pub length: usize,
 }
 
 impl ValidationError {
-    fn new(message: String) -> ValidationError {
-        ValidationError { message }
-    }
-}
-
-impl fmt::Display for ValidationError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ValidationError: {}", self.message)
-    }
-}
-
-impl error::Error for ValidationError {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        None
+    fn new<T>(message: String, item: &AstItem<T>) -> ValidationError {
+        ValidationError { message, position: item.position, length: item.length }
     }
 }
 
@@ -60,14 +46,12 @@ impl Validator {
                     self.validate_expression(arg, fmap);
                 }
 
-                if !fmap.contains_key(name) {
-                    self.errors.push(ValidationError::new(format!("Missing declaration of function '{}'", name)));
-                } else {
-                    let f = &fmap[name];
-
-                    if f.nparam != args.len() {
-                        self.errors.push(ValidationError::new(format!("Too many arguments to function '{}'", name)));
-                    }
+                if !fmap.contains_key(&name.item) {
+                    self.errors
+                        .push(ValidationError::new(format!("Missing declaration of function '{}'", name.item), name));
+                } else if fmap[&name.item].nparam != args.len() {
+                    self.errors
+                        .push(ValidationError::new(format!("Too many arguments to function '{}'", name.item), name));
                 }
             }
             _ => {}
@@ -135,7 +119,42 @@ impl Validator {
         }
     }
 
-    fn validate(&mut self, prog: &Program) -> Result<(), ValidationError> {
+    fn validate_function_declaration(
+        &mut self,
+        id: &AstItem<String>,
+        parameters: &[AstItem<String>],
+        fmap: &HashMap<String, Func>,
+    ) {
+        let nparam = parameters.len();
+
+        for i in 1..nparam {
+            for j in 0..i {
+                if parameters[i].item == parameters[j].item {
+                    self.errors.push(ValidationError::new(
+                        format!("Redefinition of parameter {}", parameters[i].item),
+                        &parameters[i],
+                    ));
+                }
+            }
+        }
+
+        if fmap.contains_key(&id.item) {
+            let f = &fmap[&id.item];
+
+            // check for different number of parameters
+            if f.nparam != nparam {
+                self.errors.push(ValidationError::new(
+                    format!(
+                        "Multiple conflicting declarations for {}, with {} and {} parameters",
+                        id.item, f.nparam, nparam
+                    ),
+                    &id,
+                ));
+            }
+        }
+    }
+
+    fn validate(&mut self, prog: &Program) {
         let mut function_map = HashMap::<String, Func>::new();
 
         let Program::Prog(funcs) = prog;
@@ -143,60 +162,39 @@ impl Validator {
         for func in funcs {
             match func {
                 Function::Declaration(id, parameters) => {
-                    let nparam = parameters.len();
-                    if function_map.contains_key(id) {
-                        let f = &function_map[id];
+                    self.validate_function_declaration(id, parameters, &function_map);
 
-                        // check for different number of parameters
-                        if f.nparam != nparam {
-                            self.errors.push(ValidationError::new(format!(
-                                "Multiple conflicting declarations for {}, with {} and {} parameters",
-                                id, f.nparam, nparam
-                            )));
-                        }
-                    } else {
-                        function_map.insert(id.to_string(), Func { nparam, defined: false });
+                    if !function_map.contains_key(&id.item) {
+                        function_map.insert(id.item.to_string(), Func { nparam: parameters.len(), defined: false });
                     }
                 }
                 Function::Definition(id, parameters, body) => {
-                    let nparam = parameters.len();
-                    if function_map.contains_key(id) {
-                        let f = &function_map[id];
+                    self.validate_function_declaration(id, parameters, &function_map);
 
-                        // check for different number of parameters
-                        if f.nparam != nparam {
-                            self.errors.push(ValidationError::new(format!(
-                                "Multiple conflicting declarations for {}, with {} and {} parameters",
-                                id, f.nparam, nparam
-                            )));
-                        }
+                    if function_map.contains_key(&id.item) {
+                        let f = &function_map[&id.item];
 
                         // check if already defined
                         if f.defined {
-                            self.errors.push(ValidationError::new(format!("Redefinition of {}", id)));
+                            self.errors.push(ValidationError::new(format!("Redefinition of {}", id.item), id));
                         } else {
-                            function_map.get_mut(id).unwrap().defined = true;
+                            function_map.get_mut(&id.item).unwrap().defined = true;
                         }
                     } else {
-                        function_map.insert(id.to_string(), Func { nparam, defined: true });
+                        function_map.insert(id.item.to_string(), Func { nparam: parameters.len(), defined: true });
                     }
 
                     self.validate_block_items(body, &function_map);
                 }
             }
         }
-
-        if !self.errors.is_empty() {
-            let messages: Vec<String> = self.errors.iter().map(|e| e.message.clone()).collect();
-            Err(ValidationError::new(messages.join("\n")))
-        } else {
-            Ok(())
-        }
     }
 }
 
-pub fn validate(prog: &Program) -> Result<(), ValidationError> {
+pub fn validate(prog: &Program) -> Vec<ValidationError> {
     let mut val = Validator::new();
 
-    val.validate(prog)
+    val.validate(prog);
+
+    val.errors
 }

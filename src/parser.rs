@@ -5,12 +5,17 @@ use itertools::MultiPeek;
 use std::error;
 use std::fmt;
 
+use crate::ast::AstItem;
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
 use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
 
 //===================================================================
 // Parsing
 //===================================================================
+
+fn astitem_with_tok<T>(item: T, tok: &TokNLoc) -> AstItem<T> {
+    AstItem::new(item, tok.location, tok.length)
+}
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
@@ -90,7 +95,7 @@ impl Parser<'_> {
 
     fn parse_postfix_expression(&mut self) -> Result<Expression, ParseError> {
         let tok = self.next().unwrap();
-        match tok.token {
+        match &tok.token {
             Token::Lparen => {
                 let subexpr = self.parse_expression()?;
                 self.assert_next_token(|t| matches!(t, Token::Rparen), "Missing closing parenthesis after expression")?;
@@ -100,11 +105,11 @@ impl Parser<'_> {
                 match self.peek().unwrap().token {
                     Token::Increment => {
                         self.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Inc, id))
+                        Ok(Expression::PostfixOp(FixOp::Inc, astitem_with_tok(id.to_string(), &tok)))
                     }
                     Token::Decrement => {
                         self.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Dec, id))
+                        Ok(Expression::PostfixOp(FixOp::Dec, astitem_with_tok(id.to_string(), &tok)))
                     }
                     Token::Lparen => {
                         self.next(); // consume
@@ -129,12 +134,12 @@ impl Parser<'_> {
                             "Missing closing parenthesis function arguments",
                         )?;
 
-                        Ok(Expression::FunctionCall(id, args))
+                        Ok(Expression::FunctionCall(astitem_with_tok(id.to_string(), &tok), args))
                     }
-                    _ => Ok(Expression::Variable(id)),
+                    _ => Ok(Expression::Variable(astitem_with_tok(id.to_string(), &tok))),
                 }
             }
-            Token::IntLiteral(v) => Ok(Expression::Constant(v)),
+            Token::IntLiteral(v) => Ok(Expression::Constant(*v)),
             _ => Err(mkperr(
                 tok,
                 "Invalid postfix expression. \
@@ -171,7 +176,10 @@ impl Parser<'_> {
                 if let Expression::Variable(id) = operand {
                     Ok(Expression::PrefixOp(FixOp::Inc, id))
                 } else {
-                    Err(mkperr(next_tok, "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"))
+                    Err(mkperr(
+                        next_tok,
+                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement",
+                    ))
                 }
             }
             Token::Decrement => {
@@ -183,7 +191,10 @@ impl Parser<'_> {
                 if let Expression::Variable(id) = operand {
                     Ok(Expression::PrefixOp(FixOp::Dec, id))
                 } else {
-                    Err(mkperr(next_tok, "Invalid prefix expression. Expected variable identifier after prefix increment/decrement"))
+                    Err(mkperr(
+                        next_tok,
+                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement",
+                    ))
                 }
             }
             _ => self.parse_postfix_expression(),
@@ -360,10 +371,10 @@ impl Parser<'_> {
             };
 
             if let Some(asskind) = ass {
-                self.next(); // consume twice
+                let idtok = self.next().unwrap(); // consume twice
                 self.next();
                 let expr = self.parse_expression()?;
-                return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr)));
+                return Ok(Expression::Assign(asskind, astitem_with_tok(id.to_string(), &idtok), Box::new(expr)));
             }
         }
 
@@ -562,17 +573,16 @@ impl Parser<'_> {
             "Invalid declaration. Expected type specifier",
         )?;
 
-        let mut tok = self.next().unwrap();
-        let id = match tok.token {
+        let idtok = self.next().unwrap();
+        let id = match &idtok.token {
             Token::Identifier(n) => n,
             _ => {
-                return Err(mkperr(tok, "Invalid declaration. Expected an identifier"));
+                return Err(mkperr(idtok, "Invalid declaration. Expected an identifier"));
             }
         };
 
         // parse initialization if next token is an assignment (equals sign)
-        tok = self.peek().unwrap();
-        let init = match tok.token {
+        let init = match self.peek().unwrap().token {
             Token::Assignment => {
                 self.next(); // consume
                 Some(self.parse_expression()?)
@@ -583,7 +593,7 @@ impl Parser<'_> {
         // ensure last token is a semicolon
         self.ensure_semicolon("Invalid declaration")?;
 
-        Ok(Declaration { id, init })
+        Ok(Declaration { id: astitem_with_tok(id.to_string(), &idtok), init })
     }
 
     fn parse_block_item(&mut self) -> Result<BlockItem, ParseError> {
@@ -610,11 +620,11 @@ impl Parser<'_> {
         )?;
 
         // next token should be an identifier
-        let tok = self.next().unwrap();
-        let function_name = match tok.token {
+        let nametok = self.next().unwrap();
+        let function_name = match &nametok.token {
             Token::Identifier(ident) => ident,
             _ => {
-                return Err(mkperr(tok, "Invalid function declarator. Expected identifier for function name"));
+                return Err(mkperr(nametok, "Invalid function declarator. Expected identifier for function name"));
             }
         };
 
@@ -629,8 +639,8 @@ impl Parser<'_> {
 
             // read parameter id
             let tok = self.next().unwrap();
-            match tok.token {
-                Token::Identifier(id) => parameter_list.push(id),
+            match &tok.token {
+                Token::Identifier(id) => parameter_list.push(astitem_with_tok(id.to_string(), &tok)),
                 _ => return Err(mkperr(tok, "Invalid function declarator. Expected identifier")),
             }
 
@@ -644,9 +654,9 @@ impl Parser<'_> {
                 )?;
 
                 let tok = self.next().unwrap();
-                match tok.token {
+                match &tok.token {
                     Token::Identifier(id) => {
-                        parameter_list.push(id);
+                        parameter_list.push(astitem_with_tok(id.to_string(), &tok));
                     }
                     _ => {
                         return Err(mkperr(tok, "Invalid function parameter list. Expected identifier after type"));
@@ -660,12 +670,12 @@ impl Parser<'_> {
 
         if let Token::Semicolon = self.peek().unwrap().token {
             self.next(); // consume semicolon
-            Ok(Function::Declaration(function_name, parameter_list))
+            Ok(Function::Declaration(astitem_with_tok(function_name.to_string(), &nametok), parameter_list))
         } else {
             // parse body
             let body = self.parse_compound_statement()?;
 
-            Ok(Function::Definition(function_name, parameter_list, body))
+            Ok(Function::Definition(astitem_with_tok(function_name.to_string(), &nametok), parameter_list, body))
         }
     }
 

@@ -120,12 +120,23 @@ fn main() {
         print_program(&program);
     }
 
-    if let Err(e) = validate(&program) {
-        println!("{}", e);
+    let validation_errors = validate(&program);
+    if !validation_errors.is_empty() {
+        for err in validation_errors {
+            let error_message = format!("ValidationError: {}", err.message);
+            print_error_message(&source, &source_path, err.position, err.length, &error_message);
+        }
         std::process::exit(1);
     }
 
-    let code = generate_code(&program, emit_32bit);
+    let code = match generate_code(&program, emit_32bit) {
+        Ok(prog) => prog,
+        Err(err) => {
+            let error_message = format!("CodegenError: {}", err.message);
+            print_error_message(&source, &source_path, err.position, err.length, &error_message);
+            std::process::exit(1);
+        }
+    };
 
     fs::write(output_path, code.get_str()).expect("Failed writing assembly output");
 }

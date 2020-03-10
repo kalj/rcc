@@ -48,26 +48,35 @@ pub enum FixOp {
     Dec,
 }
 
-#[derive(Debug)]
-pub enum Expression {
-    Assign(AssignmentKind, String, Box<Expression>),
-    BinaryOp(BinaryOp, Box<Expression>, Box<Expression>),
-    UnaryOp(UnaryOp, Box<Expression>),
-    PrefixOp(FixOp, String),
-    PostfixOp(FixOp, String),
-    Constant(i64),
-    Variable(String),
-    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
-    FunctionCall(String, Vec<Expression>),
+pub struct AstItem<T> {
+    pub item: T,
+    pub position: usize,
+    pub length: usize,
 }
 
-#[derive(Debug)]
+impl<T> AstItem<T> {
+    pub fn new(item: T, position: usize, length: usize) -> AstItem<T> {
+        AstItem { item, position, length }
+    }
+}
+
+pub enum Expression {
+    Assign(AssignmentKind, AstItem<String>, Box<Expression>),
+    BinaryOp(BinaryOp, Box<Expression>, Box<Expression>),
+    UnaryOp(UnaryOp, Box<Expression>),
+    PrefixOp(FixOp, AstItem<String>),
+    PostfixOp(FixOp, AstItem<String>),
+    Constant(i64),
+    Variable(AstItem<String>),
+    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+    FunctionCall(AstItem<String>, Vec<Expression>),
+}
+
 pub struct Declaration {
-    pub id: String,
+    pub id: AstItem<String>,
     pub init: Option<Expression>,
 }
 
-#[derive(Debug)]
 pub enum Statement {
     Null,
     Return(Expression),
@@ -82,19 +91,16 @@ pub enum Statement {
     Break,
 }
 
-#[derive(Debug)]
 pub enum BlockItem {
     Stmt(Statement),
     Decl(Declaration),
 }
 
-#[derive(Debug)]
 pub enum Function {
-    Declaration(String, Vec<String>),
-    Definition(String, Vec<String>, Vec<BlockItem>),
+    Declaration(AstItem<String>, Vec<AstItem<String>>),
+    Definition(AstItem<String>, Vec<AstItem<String>>, Vec<BlockItem>),
 }
 
-#[derive(Debug)]
 pub enum Program {
     Prog(Vec<Function>),
 }
@@ -102,7 +108,7 @@ pub enum Program {
 fn print_expression(expr: &Expression, lvl: i32) {
     match expr {
         Expression::Assign(kind, var, exp) => {
-            println!("{:<1$}Assign {2:?} {3:?} {{", "", (lvl * 2) as usize, var, kind);
+            println!("{:<1$}Assign {2:?} {3:?} {{", "", (lvl * 2) as usize, var.item, kind);
             print_expression(exp, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
@@ -118,13 +124,13 @@ fn print_expression(expr: &Expression, lvl: i32) {
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
         Expression::PrefixOp(fop, id) => {
-            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, fop, id);
+            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, fop, id.item);
         }
         Expression::PostfixOp(fop, id) => {
-            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, id, fop);
+            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, id.item, fop);
         }
         Expression::Variable(id) => {
-            println!("{0:<1$}Variable {2}", "", (lvl * 2) as usize, id);
+            println!("{0:<1$}Variable {2}", "", (lvl * 2) as usize, id.item);
         }
         Expression::Constant(val) => {
             println!("{0:<1$}Constant {2}", "", (lvl * 2) as usize, val);
@@ -137,7 +143,7 @@ fn print_expression(expr: &Expression, lvl: i32) {
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
         Expression::FunctionCall(id, arguments) => {
-            println!("{:<1$}FunctionCall {2} {{", "", (lvl * 2) as usize, id);
+            println!("{:<1$}FunctionCall {2} {{", "", (lvl * 2) as usize, id.item);
             for arg in arguments {
                 print_expression(arg, lvl + 1);
             }
@@ -249,11 +255,11 @@ fn print_statement(stmt: &Statement, lvl: i32) {
 fn print_declaration(decl: &Declaration, lvl: i32) {
     let Declaration { id, init } = decl;
     if let Some(expr) = init {
-        println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id);
+        println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id.item);
         print_expression(expr, lvl + 1);
         println!("{: <1$}}}", "", (lvl * 2) as usize);
     } else {
-        println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id);
+        println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id.item);
     }
 }
 
@@ -273,12 +279,13 @@ fn print_block_item(bkitem: &BlockItem, lvl: i32) {
 fn print_function(func: &Function, lvl: i32) {
     match func {
         Function::Declaration(id, parameters) => {
-            let parameter_string = parameters.join(", ");
-            println!("{: <1$}FunctionDeclaration {2} ({3})", "", (lvl * 2) as usize, id, parameter_string);
+            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.item.to_string()).collect();
+
+            println!("{: <1$}FunctionDeclaration {2} ({3})", "", (lvl * 2) as usize, id.item, parameter_strings.join(", "));
         }
         Function::Definition(id, parameters, body) => {
-            let parameter_string = parameters.join(", ");
-            print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_string);
+            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.item.to_string()).collect();
+            print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id.item, parameter_strings.join(", "));
 
             println!("  {: <1$}Body {{", "", (lvl * 2) as usize);
             print_block_items(body, lvl + 2);
