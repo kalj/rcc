@@ -642,7 +642,7 @@ impl Generator {
         }
     }
 
-    fn generate_block_items(&mut self, block_items: &Vec<BlockItem>) {
+    fn generate_block_items(&mut self, block_items: &[BlockItem]) {
         for bkitem in block_items {
             self.generate_block_item_code(bkitem);
         }

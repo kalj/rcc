@@ -122,7 +122,7 @@ impl Validator {
         }
     }
 
-    fn validate_block_items(&mut self, bkitems: &Vec<BlockItem>, fmap: &HashMap<String, Func>) {
+    fn validate_block_items(&mut self, bkitems: &[BlockItem], fmap: &HashMap<String, Func>) {
         for bkitem in bkitems {
             match bkitem {
                 BlockItem::Stmt(stmt) => {

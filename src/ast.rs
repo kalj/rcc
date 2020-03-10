@@ -146,7 +146,7 @@ fn print_expression(expr: &Expression, lvl: i32) {
     }
 }
 
-fn print_block_items(bkitems: &Vec<BlockItem>, lvl: i32) {
+fn print_block_items(bkitems: &[BlockItem], lvl: i32) {
     for bkitem in bkitems {
         print_block_item(bkitem, lvl + 1);
     }
