@@ -202,7 +202,9 @@ impl Generator {
         // restore var_map, and stack pointer
         let diff_stack_index = old_var_map.stack_index - self.var_map.stack_index;
         self.var_map = old_var_map;
-        self.emit(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.reg.sp.n));
+        if diff_stack_index > 0 {
+            self.emit(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.reg.sp.n));
+        }
     }
 
     fn new_loop_context(&mut self, brk_lbl: &str, cnt_lbl: &str) -> LoopContext {
@@ -292,6 +294,10 @@ impl Generator {
                 self.emit(CodeLine::i3("mov", &literal, &self.reg.ax.n32));
             }
             Expression::Variable(id) => {
+                if !self.var_map.has(id) {
+                    panic!("Tried referencing undeclared variable {}.", id);
+                }
+
                 let var_offset = self.var_map.get(id);
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
             }
