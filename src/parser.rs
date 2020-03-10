@@ -397,8 +397,7 @@ impl Parser<'_> {
 
         // we know next token is '}'
         // simply consume
-        self.next(); // consume
-        // return Err(mkperr(tok, "Invalid compound statement. Expected '}}'"));
+        self.next();
 
         Ok(CompoundStatement { block_items })
     }

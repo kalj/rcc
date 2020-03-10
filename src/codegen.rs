@@ -463,6 +463,7 @@ impl Generator {
 
                 self.emit(CodeLine::i3("cmp", "$0", &self.rega32)); //               check if false (set ZF if EAX == 0)
                 self.emit(CodeLine::i2("jne", &start)); //                           if true (ZF is not set), go start
+
                 // else simply fall through to end
                 self.emit(CodeLine::lbl(&end));
 
