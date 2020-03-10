@@ -15,6 +15,9 @@ use ast::print_program;
 mod parser;
 use parser::Parser;
 
+mod validation;
+use validation::validate;
+
 mod codegen;
 use codegen::generate_code;
 
@@ -115,6 +118,11 @@ fn main() {
     if verbose {
         println!("After parsing:");
         print_program(&program);
+    }
+
+    if let Err(e) = validate(&program) {
+        println!("{}", e);
+        std::process::exit(1);
     }
 
     let code = generate_code(&program, emit_32bit);
