@@ -102,11 +102,11 @@ pub enum Function {
 
 pub enum ToplevelItem {
     Function(Function),
-    Variable(Declaration)
+    Variable(Declaration),
 }
 
 pub enum Program {
-    Prog(Vec<ToplevelItem>)
+    Prog(Vec<ToplevelItem>),
 }
 
 fn print_expression(expr: &Expression, lvl: i32) {
@@ -289,7 +289,13 @@ fn print_function(func: &Function, lvl: i32) {
         }
         Function::Definition(id, parameters, body, _) => {
             let parameter_strings: Vec<String> = parameters.iter().map(|p| p.id.to_string()).collect();
-            println!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_strings.join(", "));
+            println!(
+                "{: <1$}FunctionDefinition {2} ({3}) {{",
+                "",
+                (lvl * 2) as usize,
+                id,
+                parameter_strings.join(", ")
+            );
 
             println!("  {: <1$}Body {{", "", (lvl * 2) as usize);
             print_block_items(body, lvl + 2);
@@ -307,7 +313,7 @@ pub fn print_program(prog: &Program) {
     for item in toplevel_items {
         match item {
             ToplevelItem::Function(fun) => print_function(fun, lvl + 1),
-            ToplevelItem::Variable(decl) => print_declaration(decl, lvl+1),
+            ToplevelItem::Variable(decl) => print_declaration(decl, lvl + 1),
         }
     }
     println!("}}");

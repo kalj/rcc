@@ -95,17 +95,19 @@ struct VarMap {
     regsize: u8,
     stack_index: i32,
     block_decl_set: HashSet<String>,
-    bp: String
+    bp: String,
 }
 
 impl VarMap {
     fn new(regsize: u8, bp: &str) -> VarMap {
-        VarMap { addr_map: HashMap::new(),
-                 globals:  HashMap::new(),
-                 regsize,
-                 stack_index: -(regsize as i32),
-                 block_decl_set: HashSet::new(),
-                 bp: bp.to_string()}
+        VarMap {
+            addr_map: HashMap::new(),
+            globals: HashMap::new(),
+            regsize,
+            stack_index: -(regsize as i32),
+            block_decl_set: HashSet::new(),
+            bp: bp.to_string(),
+        }
     }
 
     fn block_decl(&self, name: &str) -> bool {
@@ -136,12 +138,10 @@ impl VarMap {
     }
 
     fn has(&self, name: &str) -> bool {
-        self.addr_map.contains_key(name) ||
-            self.globals.contains_key(name)
+        self.addr_map.contains_key(name) || self.globals.contains_key(name)
     }
 
     fn get_address(&self, name: &str) -> String {
-
         if self.addr_map.contains_key(name) {
             format!("{}({})", self.addr_map[name], self.bp)
         } else if self.globals.contains_key(name) {
@@ -153,8 +153,8 @@ impl VarMap {
 
     fn get_undefined_globals(&self) -> Vec<String> {
         let mut v = Vec::new();
-        for (id,def) in &self.globals {
-            if ! def {
+        for (id, def) in &self.globals {
+            if !def {
                 v.push(id.to_string());
             }
         }
@@ -246,7 +246,7 @@ impl Generator {
             var_map: VarMap::new(bytes_per_reg, &reg.bp.n),
             reg: reg,
             loop_ctx: LoopContext { break_lbl: None, continue_lbl: None },
-            alignment: 4
+            alignment: 4,
         }
     }
 
@@ -800,12 +800,11 @@ impl Generator {
         if let Some(expr) = init {
             // unpack constant. we have verified that it is a constant during validation.
             if let Expression::Constant(v) = expr {
-
                 self.emit(CodeLine::i2(".globl", &id));
                 self.emit(CodeLine::i1(".data"));
-                self.emit(CodeLine::i2(".align", &format!("{}",self.alignment)));
+                self.emit(CodeLine::i2(".align", &format!("{}", self.alignment)));
                 self.emit(CodeLine::lbl(&id));
-                self.emit(CodeLine::i2(".long", &format!("{}",v)));
+                self.emit(CodeLine::i2(".long", &format!("{}", v)));
 
                 // switch back to emitting code
                 self.emit(CodeLine::i1(".text"));
@@ -814,7 +813,6 @@ impl Generator {
             } else {
                 panic!("Internal error, non-constant initializer for global variable should have been caught during validation.");
             }
-
         }
         Ok(())
     }
@@ -824,7 +822,7 @@ impl Generator {
         for item in toplevel_items {
             match item {
                 ToplevelItem::Function(func) => self.generate_function_code(func)?,
-                ToplevelItem::Variable(decl) => self.generate_global_declaration_code(decl)?
+                ToplevelItem::Variable(decl) => self.generate_global_declaration_code(decl)?,
             }
         }
 
@@ -832,7 +830,7 @@ impl Generator {
         for gid in self.var_map.get_undefined_globals() {
             self.emit(CodeLine::i2(".globl", &gid));
             self.emit(CodeLine::i1(".bss"));
-            self.emit(CodeLine::i2(".align", &format!("{}",self.alignment)));
+            self.emit(CodeLine::i2(".align", &format!("{}", self.alignment)));
             self.emit(CodeLine::lbl(&gid));
             self.emit(CodeLine::i2(".zero", "4")); // size of int
         }

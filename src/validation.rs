@@ -27,11 +27,7 @@ struct Validator {
 
 impl Validator {
     fn new() -> Validator {
-        Validator {
-            errors: Vec::new(),
-            function_map: HashMap::new(),
-            globals_map: HashMap::new(),
-        }
+        Validator { errors: Vec::new(), function_map: HashMap::new(), globals_map: HashMap::new() }
     }
 
     fn validate_expression(&mut self, expr: &Expression) {
@@ -123,12 +119,7 @@ impl Validator {
         }
     }
 
-    fn validate_function_declaration(
-        &mut self,
-        id: &str,
-        parameters: &[FunctionParameter],
-        ctx: &AstContext,
-    ) {
+    fn validate_function_declaration(&mut self, id: &str, parameters: &[FunctionParameter], ctx: &AstContext) {
         let nparam = parameters.len();
 
         if self.globals_map.contains_key(id) {
@@ -193,7 +184,6 @@ impl Validator {
     }
 
     fn validate_global_declaration(&mut self, decl: &Declaration) {
-
         let Declaration { id, init, ctx } = decl;
 
         if self.function_map.contains_key(id) {
@@ -218,11 +208,9 @@ impl Validator {
     }
 
     fn validate_program(&mut self, prog: &Program) {
-
         let Program::Prog(toplevel_items) = prog;
 
         for item in toplevel_items {
-
             match item {
                 ToplevelItem::Function(func) => self.validate_function(func),
                 ToplevelItem::Variable(decl) => self.validate_global_declaration(decl),

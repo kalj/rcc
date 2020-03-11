@@ -682,7 +682,6 @@ impl Parser<'_> {
     }
 
     fn parse_toplevel_item(&mut self) -> Result<ToplevelItem, ParseError> {
-
         // we expect either
         //    {type} {name} ( ....
         // or
