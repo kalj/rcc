@@ -5,16 +5,16 @@ use itertools::MultiPeek;
 use std::error;
 use std::fmt;
 
-use crate::ast::AstItem;
+use crate::ast::AstContext;
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement};
 
 //===================================================================
 // Parsing
 //===================================================================
 
-fn astitem_with_tok<T>(item: T, tok: &TokNLoc) -> AstItem<T> {
-    AstItem::new(item, tok.location, tok.length)
+fn context_from_token(tok: &TokNLoc) -> AstContext {
+    AstContext { position: tok.location, length: tok.length }
 }
 
 #[derive(Debug, Clone)]
@@ -105,11 +105,11 @@ impl Parser<'_> {
                 match self.peek().unwrap().token {
                     Token::Increment => {
                         self.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Inc, astitem_with_tok(id.to_string(), &tok)))
+                        Ok(Expression::PostfixOp(FixOp::Inc, id.to_string(), context_from_token(&tok)))
                     }
                     Token::Decrement => {
                         self.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Dec, astitem_with_tok(id.to_string(), &tok)))
+                        Ok(Expression::PostfixOp(FixOp::Dec, id.to_string(), context_from_token(&tok)))
                     }
                     Token::Lparen => {
                         self.next(); // consume
@@ -134,9 +134,9 @@ impl Parser<'_> {
                             "Missing closing parenthesis function arguments",
                         )?;
 
-                        Ok(Expression::FunctionCall(astitem_with_tok(id.to_string(), &tok), args))
+                        Ok(Expression::FunctionCall(id.to_string(), args, context_from_token(&tok)))
                     }
-                    _ => Ok(Expression::Variable(astitem_with_tok(id.to_string(), &tok))),
+                    _ => Ok(Expression::Variable(id.to_string(), context_from_token(&tok))),
                 }
             }
             Token::IntLiteral(v) => Ok(Expression::Constant(*v)),
@@ -173,8 +173,8 @@ impl Parser<'_> {
                 let next_tok = self.peek().unwrap(); // for mkperr message
 
                 let operand = self.parse_postfix_expression()?;
-                if let Expression::Variable(id) = operand {
-                    Ok(Expression::PrefixOp(FixOp::Inc, id))
+                if let Expression::Variable(id, _) = operand {
+                    Ok(Expression::PrefixOp(FixOp::Inc, id, context_from_token(&tok)))
                 } else {
                     Err(mkperr(
                         next_tok,
@@ -188,8 +188,8 @@ impl Parser<'_> {
                 let next_tok = self.peek().unwrap(); // for mkperr message
 
                 let operand = self.parse_postfix_expression()?;
-                if let Expression::Variable(id) = operand {
-                    Ok(Expression::PrefixOp(FixOp::Dec, id))
+                if let Expression::Variable(id, _) = operand {
+                    Ok(Expression::PrefixOp(FixOp::Dec, id, context_from_token(&tok)))
                 } else {
                     Err(mkperr(
                         next_tok,
@@ -374,7 +374,7 @@ impl Parser<'_> {
                 let idtok = self.next().unwrap(); // consume twice
                 self.next();
                 let expr = self.parse_expression()?;
-                return Ok(Expression::Assign(asskind, astitem_with_tok(id.to_string(), &idtok), Box::new(expr)));
+                return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr), context_from_token(&idtok)));
             }
         }
 
@@ -415,14 +415,14 @@ impl Parser<'_> {
                 Statement::Return(expr)
             }
             Token::Keyword(Keyword::Continue) => {
-                self.next(); // consume
+                let tok = self.next().unwrap(); // consume
                 self.ensure_semicolon("Invalid continue statement")?;
-                Statement::Continue
+                Statement::Continue(context_from_token(&tok))
             }
             Token::Keyword(Keyword::Break) => {
-                self.next(); // consume
+                let tok = self.next().unwrap(); // consume
                 self.ensure_semicolon("Invalid break statement")?;
-                Statement::Break
+                Statement::Break(context_from_token(&tok))
             }
             Token::Keyword(Keyword::If) => {
                 self.next(); // consume
@@ -593,7 +593,7 @@ impl Parser<'_> {
         // ensure last token is a semicolon
         self.ensure_semicolon("Invalid declaration")?;
 
-        Ok(Declaration { id: astitem_with_tok(id.to_string(), &idtok), init })
+        Ok(Declaration { id: id.to_string(), init, ctx: context_from_token(&idtok) })
     }
 
     fn parse_block_item(&mut self) -> Result<BlockItem, ParseError> {
@@ -640,7 +640,9 @@ impl Parser<'_> {
             // read parameter id
             let tok = self.next().unwrap();
             match &tok.token {
-                Token::Identifier(id) => parameter_list.push(astitem_with_tok(id.to_string(), &tok)),
+                Token::Identifier(id) => {
+                    parameter_list.push(FunctionParameter { id: id.to_string(), ctx: context_from_token(&tok) });
+                }
                 _ => return Err(mkperr(tok, "Invalid function declarator. Expected identifier")),
             }
 
@@ -656,7 +658,7 @@ impl Parser<'_> {
                 let tok = self.next().unwrap();
                 match &tok.token {
                     Token::Identifier(id) => {
-                        parameter_list.push(astitem_with_tok(id.to_string(), &tok));
+                        parameter_list.push(FunctionParameter { id: id.to_string(), ctx: context_from_token(&tok) });
                     }
                     _ => {
                         return Err(mkperr(tok, "Invalid function parameter list. Expected identifier after type"));
@@ -670,12 +672,12 @@ impl Parser<'_> {
 
         if let Token::Semicolon = self.peek().unwrap().token {
             self.next(); // consume semicolon
-            Ok(Function::Declaration(astitem_with_tok(function_name.to_string(), &nametok), parameter_list))
+            Ok(Function::Declaration(function_name.to_string(), parameter_list, context_from_token(&nametok)))
         } else {
             // parse body
             let body = self.parse_compound_statement()?;
 
-            Ok(Function::Definition(astitem_with_tok(function_name.to_string(), &nametok), parameter_list, body))
+            Ok(Function::Definition(function_name.to_string(), parameter_list, body, context_from_token(&nametok)))
         }
     }
 

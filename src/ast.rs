@@ -48,33 +48,27 @@ pub enum FixOp {
     Dec,
 }
 
-pub struct AstItem<T> {
-    pub item: T,
+pub struct AstContext {
     pub position: usize,
     pub length: usize,
 }
 
-impl<T> AstItem<T> {
-    pub fn new(item: T, position: usize, length: usize) -> AstItem<T> {
-        AstItem { item, position, length }
-    }
-}
-
 pub enum Expression {
-    Assign(AssignmentKind, AstItem<String>, Box<Expression>),
+    Assign(AssignmentKind, String, Box<Expression>, AstContext),
     BinaryOp(BinaryOp, Box<Expression>, Box<Expression>),
     UnaryOp(UnaryOp, Box<Expression>),
-    PrefixOp(FixOp, AstItem<String>),
-    PostfixOp(FixOp, AstItem<String>),
+    PrefixOp(FixOp, String, AstContext),
+    PostfixOp(FixOp, String, AstContext),
     Constant(i64),
-    Variable(AstItem<String>),
+    Variable(String, AstContext),
     Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
-    FunctionCall(AstItem<String>, Vec<Expression>),
+    FunctionCall(String, Vec<Expression>, AstContext),
 }
 
 pub struct Declaration {
-    pub id: AstItem<String>,
+    pub id: String,
     pub init: Option<Expression>,
+    pub ctx: AstContext,
 }
 
 pub enum Statement {
@@ -87,8 +81,8 @@ pub enum Statement {
     ForDecl(Declaration, Expression, Option<Expression>, Box<Statement>),
     While(Expression, Box<Statement>),
     DoWhile(Box<Statement>, Expression),
-    Continue,
-    Break,
+    Continue(AstContext),
+    Break(AstContext),
 }
 
 pub enum BlockItem {
@@ -96,9 +90,14 @@ pub enum BlockItem {
     Decl(Declaration),
 }
 
+pub struct FunctionParameter {
+    pub id: String,
+    pub ctx: AstContext,
+}
+
 pub enum Function {
-    Declaration(AstItem<String>, Vec<AstItem<String>>),
-    Definition(AstItem<String>, Vec<AstItem<String>>, Vec<BlockItem>),
+    Declaration(String, Vec<FunctionParameter>, AstContext),
+    Definition(String, Vec<FunctionParameter>, Vec<BlockItem>, AstContext),
 }
 
 pub enum Program {
@@ -107,8 +106,8 @@ pub enum Program {
 
 fn print_expression(expr: &Expression, lvl: i32) {
     match expr {
-        Expression::Assign(kind, var, exp) => {
-            println!("{:<1$}Assign {2:?} {3:?} {{", "", (lvl * 2) as usize, var.item, kind);
+        Expression::Assign(kind, var, exp, _) => {
+            println!("{:<1$}Assign {2:?} {3:?} {{", "", (lvl * 2) as usize, var, kind);
             print_expression(exp, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
@@ -123,14 +122,14 @@ fn print_expression(expr: &Expression, lvl: i32) {
             print_expression(exp, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
-        Expression::PrefixOp(fop, id) => {
-            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, fop, id.item);
+        Expression::PrefixOp(fop, id, _) => {
+            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, fop, id);
         }
-        Expression::PostfixOp(fop, id) => {
-            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, id.item, fop);
+        Expression::PostfixOp(fop, id, _) => {
+            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, id, fop);
         }
-        Expression::Variable(id) => {
-            println!("{0:<1$}Variable {2}", "", (lvl * 2) as usize, id.item);
+        Expression::Variable(id, _) => {
+            println!("{0:<1$}Variable {2}", "", (lvl * 2) as usize, id);
         }
         Expression::Constant(val) => {
             println!("{0:<1$}Constant {2}", "", (lvl * 2) as usize, val);
@@ -142,8 +141,8 @@ fn print_expression(expr: &Expression, lvl: i32) {
             print_expression(elseexpr, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
-        Expression::FunctionCall(id, arguments) => {
-            println!("{:<1$}FunctionCall {2} {{", "", (lvl * 2) as usize, id.item);
+        Expression::FunctionCall(id, arguments, _) => {
+            println!("{:<1$}FunctionCall {2} {{", "", (lvl * 2) as usize, id);
             for arg in arguments {
                 print_expression(arg, lvl + 1);
             }
@@ -165,8 +164,8 @@ fn print_statement(stmt: &Statement, lvl: i32) {
             print_expression(expr, lvl + 1);
             println!("{: <1$}}}", "", (lvl * 2) as usize);
         }
-        Statement::Break => println!("{: <1$}Break", "", (lvl * 2) as usize),
-        Statement::Continue => println!("{: <1$}Continue", "", (lvl * 2) as usize),
+        Statement::Break(_) => println!("{: <1$}Break", "", (lvl * 2) as usize),
+        Statement::Continue(_) => println!("{: <1$}Continue", "", (lvl * 2) as usize),
         Statement::Expr(expr) => {
             println!("{: <1$}Expr {{", "", (lvl * 2) as usize);
             print_expression(expr, lvl + 1);
@@ -253,13 +252,13 @@ fn print_statement(stmt: &Statement, lvl: i32) {
 }
 
 fn print_declaration(decl: &Declaration, lvl: i32) {
-    let Declaration { id, init } = decl;
+    let Declaration { id, init, .. } = decl;
     if let Some(expr) = init {
-        println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id.item);
+        println!("{: <1$}Decl {2:?} {{", "", (lvl * 2) as usize, id);
         print_expression(expr, lvl + 1);
         println!("{: <1$}}}", "", (lvl * 2) as usize);
     } else {
-        println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id.item);
+        println!("{: <1$}Decl {2:?}", "", (lvl * 2) as usize, id);
     }
 }
 
@@ -278,14 +277,14 @@ fn print_block_item(bkitem: &BlockItem, lvl: i32) {
 
 fn print_function(func: &Function, lvl: i32) {
     match func {
-        Function::Declaration(id, parameters) => {
-            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.item.to_string()).collect();
+        Function::Declaration(id, parameters, _) => {
+            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.id.to_string()).collect();
 
-            println!("{: <1$}FunctionDeclaration {2} ({3})", "", (lvl * 2) as usize, id.item, parameter_strings.join(", "));
+            println!("{: <1$}FunctionDeclaration {2} ({3})", "", (lvl * 2) as usize, id, parameter_strings.join(", "));
         }
-        Function::Definition(id, parameters, body) => {
-            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.item.to_string()).collect();
-            print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id.item, parameter_strings.join(", "));
+        Function::Definition(id, parameters, body, _) => {
+            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.id.to_string()).collect();
+            print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_strings.join(", "));
 
             println!("  {: <1$}Body {{", "", (lvl * 2) as usize);
             print_block_items(body, lvl + 2);

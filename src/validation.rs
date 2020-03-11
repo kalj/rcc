@@ -1,5 +1,5 @@
-use crate::ast::AstItem;
-use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
+use crate::ast::AstContext;
+use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement};
 use std::collections::HashMap;
 
 pub struct ValidationError {
@@ -9,8 +9,8 @@ pub struct ValidationError {
 }
 
 impl ValidationError {
-    fn new<T>(message: String, item: &AstItem<T>) -> ValidationError {
-        ValidationError { message, position: item.position, length: item.length }
+    fn new(message: String, ctx: &AstContext) -> ValidationError {
+        ValidationError { message, position: ctx.position, length: ctx.length }
     }
 }
 
@@ -30,7 +30,7 @@ impl Validator {
 
     fn validate_expression(&mut self, expr: &Expression, fmap: &HashMap<String, Func>) {
         match expr {
-            Expression::Assign(_, _, expr) => self.validate_expression(expr, fmap),
+            Expression::Assign(_, _, expr, _) => self.validate_expression(expr, fmap),
             Expression::BinaryOp(_, e1, e2) => {
                 self.validate_expression(e1, fmap);
                 self.validate_expression(e2, fmap);
@@ -41,17 +41,15 @@ impl Validator {
                 self.validate_expression(e2, fmap);
                 self.validate_expression(e3, fmap);
             }
-            Expression::FunctionCall(name, args) => {
+            Expression::FunctionCall(name, args, ctx) => {
                 for arg in args {
                     self.validate_expression(arg, fmap);
                 }
 
-                if !fmap.contains_key(&name.item) {
-                    self.errors
-                        .push(ValidationError::new(format!("Missing declaration of function '{}'", name.item), name));
-                } else if fmap[&name.item].nparam != args.len() {
-                    self.errors
-                        .push(ValidationError::new(format!("Too many arguments to function '{}'", name.item), name));
+                if !fmap.contains_key(name) {
+                    self.errors.push(ValidationError::new(format!("Missing declaration of function '{}'", name), ctx));
+                } else if fmap[name].nparam != args.len() {
+                    self.errors.push(ValidationError::new(format!("Too many arguments to function '{}'", name), ctx));
                 }
             }
             _ => {}
@@ -121,34 +119,35 @@ impl Validator {
 
     fn validate_function_declaration(
         &mut self,
-        id: &AstItem<String>,
-        parameters: &[AstItem<String>],
+        id: &str,
+        parameters: &[FunctionParameter],
         fmap: &HashMap<String, Func>,
+        ctx: &AstContext,
     ) {
         let nparam = parameters.len();
 
         for i in 1..nparam {
             for j in 0..i {
-                if parameters[i].item == parameters[j].item {
+                if parameters[i].id == parameters[j].id {
                     self.errors.push(ValidationError::new(
-                        format!("Redefinition of parameter {}", parameters[i].item),
-                        &parameters[i],
+                        format!("Redefinition of parameter {}", parameters[i].id),
+                        &parameters[i].ctx,
                     ));
                 }
             }
         }
 
-        if fmap.contains_key(&id.item) {
-            let f = &fmap[&id.item];
+        if fmap.contains_key(id) {
+            let f = &fmap[id];
 
             // check for different number of parameters
             if f.nparam != nparam {
                 self.errors.push(ValidationError::new(
                     format!(
                         "Multiple conflicting declarations for {}, with {} and {} parameters",
-                        id.item, f.nparam, nparam
+                        id, f.nparam, nparam
                     ),
-                    &id,
+                    ctx,
                 ));
             }
         }
@@ -161,27 +160,27 @@ impl Validator {
 
         for func in funcs {
             match func {
-                Function::Declaration(id, parameters) => {
-                    self.validate_function_declaration(id, parameters, &function_map);
+                Function::Declaration(id, parameters, ctx) => {
+                    self.validate_function_declaration(id, parameters, &function_map, ctx);
 
-                    if !function_map.contains_key(&id.item) {
-                        function_map.insert(id.item.to_string(), Func { nparam: parameters.len(), defined: false });
+                    if !function_map.contains_key(id) {
+                        function_map.insert(id.to_string(), Func { nparam: parameters.len(), defined: false });
                     }
                 }
-                Function::Definition(id, parameters, body) => {
-                    self.validate_function_declaration(id, parameters, &function_map);
+                Function::Definition(id, parameters, body, ctx) => {
+                    self.validate_function_declaration(id, parameters, &function_map, ctx);
 
-                    if function_map.contains_key(&id.item) {
-                        let f = &function_map[&id.item];
+                    if function_map.contains_key(id) {
+                        let f = &function_map[id];
 
                         // check if already defined
                         if f.defined {
-                            self.errors.push(ValidationError::new(format!("Redefinition of {}", id.item), id));
+                            self.errors.push(ValidationError::new(format!("Redefinition of {}", id), ctx));
                         } else {
-                            function_map.get_mut(&id.item).unwrap().defined = true;
+                            function_map.get_mut(id).unwrap().defined = true;
                         }
                     } else {
-                        function_map.insert(id.item.to_string(), Func { nparam: parameters.len(), defined: true });
+                        function_map.insert(id.to_string(), Func { nparam: parameters.len(), defined: true });
                     }
 
                     self.validate_block_items(body, &function_map);

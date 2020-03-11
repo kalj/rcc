@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::error;
 use std::fmt;
 
+use crate::ast::AstContext;
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
 use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
 
@@ -17,8 +18,8 @@ pub struct CodegenError {
 }
 
 impl CodegenError {
-    fn new(message: String, position: usize, length: usize) -> CodegenError {
-        CodegenError { position, length, message }
+    fn new(message: String, ctx: &AstContext) -> CodegenError {
+        CodegenError { position: ctx.position, length: ctx.length, message }
     }
 }
 
@@ -320,16 +321,12 @@ impl Generator {
                 let literal = format!("${}", val);
                 self.emit(CodeLine::i3("mov", &literal, &self.reg.ax.n32));
             }
-            Expression::Variable(id) => {
-                if !self.var_map.has(&id.item) {
-                    return Err(CodegenError::new(
-                        format!("Tried referencing undeclared variable {}.", id.item),
-                        id.position,
-                        id.length,
-                    ));
+            Expression::Variable(id, ctx) => {
+                if !self.var_map.has(id) {
+                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
                 }
 
-                let var_offset = self.var_map.get(&id.item);
+                let var_offset = self.var_map.get(&id);
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
             }
             Expression::UnaryOp(uop, expr) => {
@@ -395,16 +392,12 @@ impl Generator {
                 self.emit(CodeLine::i2("pop", &self.reg.ax.n)); //                     get arg1 from stack into %eax
                 self.generate_binop_code(bop);
             }
-            Expression::PrefixOp(fixop, id) => {
-                if !self.var_map.has(&id.item) {
-                    return Err(CodegenError::new(
-                        format!("Tried referencing undeclared variable {}.", id.item),
-                        id.position,
-                        id.length,
-                    ));
+            Expression::PrefixOp(fixop, id, ctx) => {
+                if !self.var_map.has(&id) {
+                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
                 }
 
-                let var_offset = self.var_map.get(&id.item);
+                let var_offset = self.var_map.get(&id);
                 if let FixOp::Inc = fixop {
                     self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.reg.bp.n)));
                 } else {
@@ -412,16 +405,12 @@ impl Generator {
                 }
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
             }
-            Expression::PostfixOp(fixop, id) => {
-                if !self.var_map.has(&id.item) {
-                    return Err(CodegenError::new(
-                        format!("Tried referencing undeclared variable {}.", id.item),
-                        id.position,
-                        id.length,
-                    ));
+            Expression::PostfixOp(fixop, id, ctx) => {
+                if !self.var_map.has(&id) {
+                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
                 }
 
-                let var_offset = self.var_map.get(&id.item);
+                let var_offset = self.var_map.get(&id);
                 self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
                 if let FixOp::Inc = fixop {
                     self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.reg.bp.n)));
@@ -429,18 +418,14 @@ impl Generator {
                     self.emit(CodeLine::i2("decl", &format!("{}({})", var_offset, self.reg.bp.n)));
                 }
             }
-            Expression::Assign(kind, id, expr) => {
-                if !self.var_map.has(&id.item) {
-                    return Err(CodegenError::new(
-                        format!("Tried referencing undeclared variable {}.", id.item),
-                        id.position,
-                        id.length,
-                    ));
+            Expression::Assign(kind, id, expr, ctx) => {
+                if !self.var_map.has(id) {
+                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
                 }
 
                 self.generate_expression_code(expr)?;
 
-                let var_offset = self.var_map.get(&id.item);
+                let var_offset = self.var_map.get(id);
 
                 let binop = match kind {
                     AssignmentKind::Write => None,
@@ -481,7 +466,7 @@ impl Generator {
                 self.generate_expression_code(elseexpr)?;
                 self.emit(CodeLine::lbl(&end));
             }
-            Expression::FunctionCall(id, args) => {
+            Expression::FunctionCall(id, args, _) => {
                 if self.emit_32bit {
                     // evaluate arguments and push on stack in reverse order
                     for arg in args.iter().rev() {
@@ -489,7 +474,7 @@ impl Generator {
                         self.emit(CodeLine::i2("push", &self.reg.ax.n));
                     }
 
-                    self.emit(CodeLine::i2("call", &id.item));
+                    self.emit(CodeLine::i2("call", id));
                     if !args.is_empty() {
                         let offset_literal = format!("${}", 4 * args.len());
                         self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
@@ -507,7 +492,7 @@ impl Generator {
                         }
                     }
 
-                    self.emit(CodeLine::i2("call", &id.item));
+                    self.emit(CodeLine::i2("call", &id));
                     if args.len() > 6 {
                         let offset_literal = format!("${}", 8 * (args.len() - 6));
                         self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
@@ -519,13 +504,9 @@ impl Generator {
     }
 
     fn generate_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
-        let Declaration { id, init } = decl;
-        if self.var_map.block_decl(&id.item) {
-            return Err(CodegenError::new(
-                format!("Variable {} already declared in block", id.item),
-                id.position,
-                id.length,
-            ));
+        let Declaration { id, init, ctx } = decl;
+        if self.var_map.block_decl(&id) {
+            return Err(CodegenError::new(format!("Variable {} already declared in block", id), &ctx));
         }
         if let Some(expr) = init {
             self.generate_expression_code(&expr)?; //                  possibly compute initial value, saved in %rax
@@ -533,7 +514,7 @@ impl Generator {
             self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n)); //   otherwise initialize %rax with 0
         }
         self.emit(CodeLine::i2("push", &self.reg.ax.n)); //            push value on stack at known index
-        self.var_map.insert_local(&id.item); //                        save new variable
+        self.var_map.insert_local(&id); //                        save new variable
         Ok(())
     }
 
@@ -545,22 +526,21 @@ impl Generator {
                 self.emit(CodeLine::i2("pop", &self.reg.bp.n));
                 self.emit(CodeLine::i1("ret"));
             }
-            Statement::Break => {
+            Statement::Break(ctx) => {
                 if let Some(blbl) = &self.loop_ctx.break_lbl {
                     self.emit(CodeLine::i2("jmp", blbl));
                 } else {
                     return Err(CodegenError::new(
                         "Invalid break not inside a loop or switch statement".to_string(),
-                        0,
-                        1,
+                        ctx,
                     ));
                 }
             }
-            Statement::Continue => {
+            Statement::Continue(ctx) => {
                 if let Some(clbl) = &self.loop_ctx.continue_lbl {
                     self.emit(CodeLine::i2("jmp", clbl));
                 } else {
-                    return Err(CodegenError::new("Invalid continue not inside a loop".to_string(), 0, 1));
+                    return Err(CodegenError::new("Invalid continue not inside a loop".to_string(), ctx));
                 }
             }
             Statement::Expr(expr) => self.generate_expression_code(&expr)?,
@@ -726,10 +706,10 @@ impl Generator {
 
     fn generate_function_code(&mut self, func: &Function) -> Result<(), CodegenError> {
         match func {
-            Function::Declaration(_, _) => {}
-            Function::Definition(name, parameters, body) => {
-                self.emit(CodeLine::i2(".globl", &name.item));
-                self.emit(CodeLine::lbl(&name.item));
+            Function::Declaration(_, _, _) => {}
+            Function::Definition(name, parameters, body, _) => {
+                self.emit(CodeLine::i2(".globl", name));
+                self.emit(CodeLine::lbl(name));
                 self.emit(CodeLine::i2("push", &self.reg.bp.n));
                 self.emit(CodeLine::i3("mov", &self.reg.sp.n, &self.reg.bp.n));
 
@@ -742,7 +722,7 @@ impl Generator {
                     for (i, p) in parameters.iter().enumerate() {
                         // 4 extra for the stack pointer which will be pushed
                         let stack_offset = 4 + 4 * (1 + i as i32);
-                        self.var_map.insert_arg(&p.item, stack_offset);
+                        self.var_map.insert_arg(&p.id, stack_offset);
                     }
                 } else {
                     let narg_regs = self.reg.args.len();
@@ -751,11 +731,11 @@ impl Generator {
                         if i < narg_regs {
                             //  push value on stack at known index
                             self.emit(CodeLine::i2("push", &self.reg.args[i].n));
-                            self.var_map.insert_local(&p.item); //      save new variable
+                            self.var_map.insert_local(&p.id); //      save new variable
                         } else {
                             // 8 extra for the stack pointer which will be pushed
                             let stack_offset = 8 + 8 * (1 + i - narg_regs);
-                            self.var_map.insert_arg(&p.item, stack_offset as i32);
+                            self.var_map.insert_arg(&p.id, stack_offset as i32);
                         }
                     }
                 }
