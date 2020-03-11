@@ -284,7 +284,7 @@ fn print_function(func: &Function, lvl: i32) {
         }
         Function::Definition(id, parameters, body, _) => {
             let parameter_strings: Vec<String> = parameters.iter().map(|p| p.id.to_string()).collect();
-            print!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_strings.join(", "));
+            println!("{: <1$}FunctionDefinition {2} ({3}) {{", "", (lvl * 2) as usize, id, parameter_strings.join(", "));
 
             println!("  {: <1$}Body {{", "", (lvl * 2) as usize);
             print_block_items(body, lvl + 2);
