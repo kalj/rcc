@@ -94,11 +94,16 @@ struct VarMap {
     regsize: u8,
     stack_index: i32,
     block_decl_set: HashSet<String>,
+    bp: String
 }
 
 impl VarMap {
-    fn new(regsize: u8) -> VarMap {
-        VarMap { addr_map: HashMap::new(), regsize, stack_index: -(regsize as i32), block_decl_set: HashSet::new() }
+    fn new(regsize: u8, bp: &str) -> VarMap {
+        VarMap { addr_map: HashMap::new(),
+                 regsize,
+                 stack_index: -(regsize as i32),
+                 block_decl_set: HashSet::new(),
+                 bp: bp.to_string()}
     }
 
     fn block_decl(&self, name: &str) -> bool {
@@ -120,8 +125,13 @@ impl VarMap {
         self.addr_map.contains_key(name)
     }
 
-    fn get(&self, name: &str) -> i32 {
-        self.addr_map[name]
+    fn get_address(&self, name: &str) -> String {
+
+        if self.addr_map.contains_key(name) {
+            format!("{}({})", self.addr_map[name], self.bp)
+        } else {
+            panic!("Internal error. No such variable");
+        }
     }
 }
 
@@ -200,12 +210,13 @@ pub struct Generator {
 impl Generator {
     fn new(emit_32bit: bool) -> Generator {
         let bytes_per_reg = if emit_32bit { 4 } else { 8 };
+        let reg = Registers::new(emit_32bit);
         Generator {
             code: Code::new(),
             emit_32bit,
             label_counter: 0,
-            reg: Registers::new(emit_32bit),
-            var_map: VarMap::new(bytes_per_reg),
+            var_map: VarMap::new(bytes_per_reg, &reg.bp.n),
+            reg: reg,
             loop_ctx: LoopContext { break_lbl: None, continue_lbl: None },
         }
     }
@@ -323,11 +334,10 @@ impl Generator {
             }
             Expression::Variable(id, ctx) => {
                 if !self.var_map.has(id) {
-                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
+                    return Err(CodegenError::new(format!("Missing declaration for variable '{}'", id), &ctx));
                 }
-
-                let var_offset = self.var_map.get(&id);
-                self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
+                let addr = self.var_map.get_address(&id);
+                self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
             }
             Expression::UnaryOp(uop, expr) => {
                 self.generate_expression_code(expr)?;
@@ -397,25 +407,25 @@ impl Generator {
                     return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
                 }
 
-                let var_offset = self.var_map.get(&id);
+                let addr = self.var_map.get_address(&id);
                 if let FixOp::Inc = fixop {
-                    self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.reg.bp.n)));
+                    self.emit(CodeLine::i2("incl", &addr));
                 } else {
-                    self.emit(CodeLine::i2("decl", &format!("{}({})", var_offset, self.reg.bp.n)));
+                    self.emit(CodeLine::i2("decl", &addr));
                 }
-                self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
+                self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
             }
             Expression::PostfixOp(fixop, id, ctx) => {
                 if !self.var_map.has(&id) {
                     return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
                 }
 
-                let var_offset = self.var_map.get(&id);
-                self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n));
+                let addr = self.var_map.get_address(&id);
+                self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
                 if let FixOp::Inc = fixop {
-                    self.emit(CodeLine::i2("incl", &format!("{}({})", var_offset, self.reg.bp.n)));
+                    self.emit(CodeLine::i2("incl", &addr));
                 } else {
-                    self.emit(CodeLine::i2("decl", &format!("{}({})", var_offset, self.reg.bp.n)));
+                    self.emit(CodeLine::i2("decl", &addr));
                 }
             }
             Expression::Assign(kind, id, expr, ctx) => {
@@ -425,7 +435,7 @@ impl Generator {
 
                 self.generate_expression_code(expr)?;
 
-                let var_offset = self.var_map.get(id);
+                let addr = self.var_map.get_address(id);
 
                 let binop = match kind {
                     AssignmentKind::Write => None,
@@ -443,11 +453,11 @@ impl Generator {
 
                 if let Some(bop) = binop {
                     self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.cx.n32));
-                    self.emit(CodeLine::i3("mov", &format!("{}({})", var_offset, self.reg.bp.n), &self.reg.ax.n32));
+                    self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n32));
                     self.generate_binop_code(&bop);
                 }
 
-                self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &format!("{}({})", var_offset, self.reg.bp.n)));
+                self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &addr));
             }
             Expression::Conditional(condexpr, ifexpr, elseexpr) => {
                 // setup labels
