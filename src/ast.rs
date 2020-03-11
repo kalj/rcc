@@ -100,8 +100,13 @@ pub enum Function {
     Definition(String, Vec<FunctionParameter>, Vec<BlockItem>, AstContext),
 }
 
+pub enum ToplevelItem {
+    Function(Function),
+    Variable(Declaration)
+}
+
 pub enum Program {
-    Prog(Vec<Function>),
+    Prog(Vec<ToplevelItem>)
 }
 
 fn print_expression(expr: &Expression, lvl: i32) {
@@ -298,9 +303,12 @@ fn print_function(func: &Function, lvl: i32) {
 pub fn print_program(prog: &Program) {
     let lvl = 0;
     println!("Program {{");
-    let Program::Prog(funcs) = prog;
-    for f in funcs {
-        print_function(f, lvl + 1);
+    let Program::Prog(toplevel_items) = prog;
+    for item in toplevel_items {
+        match item {
+            ToplevelItem::Function(fun) => print_function(fun, lvl + 1),
+            ToplevelItem::Variable(decl) => print_declaration(decl, lvl+1),
+        }
     }
     println!("}}");
 }

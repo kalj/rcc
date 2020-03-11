@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ast::AstContext;
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement};
+use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement, ToplevelItem};
 
 //===================================================================
 // Code generation
@@ -91,6 +91,7 @@ impl Code {
 #[derive(Debug, Clone)]
 struct VarMap {
     addr_map: HashMap<String, i32>,
+    globals: HashMap<String, bool>,
     regsize: u8,
     stack_index: i32,
     block_decl_set: HashSet<String>,
@@ -100,6 +101,7 @@ struct VarMap {
 impl VarMap {
     fn new(regsize: u8, bp: &str) -> VarMap {
         VarMap { addr_map: HashMap::new(),
+                 globals:  HashMap::new(),
                  regsize,
                  stack_index: -(regsize as i32),
                  block_decl_set: HashSet::new(),
@@ -121,17 +123,42 @@ impl VarMap {
         self.block_decl_set.insert(name.to_string());
     }
 
+    fn insert_global(&mut self, name: &str) {
+        if !self.globals.contains_key(name) {
+            self.globals.insert(name.to_string(), false);
+        }
+    }
+
+    fn set_global_defined(&mut self, name: &str) {
+        if self.globals.contains_key(name) {
+            *self.globals.get_mut(name).unwrap() = true;
+        }
+    }
+
     fn has(&self, name: &str) -> bool {
-        self.addr_map.contains_key(name)
+        self.addr_map.contains_key(name) ||
+            self.globals.contains_key(name)
     }
 
     fn get_address(&self, name: &str) -> String {
 
         if self.addr_map.contains_key(name) {
             format!("{}({})", self.addr_map[name], self.bp)
+        } else if self.globals.contains_key(name) {
+            name.to_string()
         } else {
             panic!("Internal error. No such variable");
         }
+    }
+
+    fn get_undefined_globals(&self) -> Vec<String> {
+        let mut v = Vec::new();
+        for (id,def) in &self.globals {
+            if ! def {
+                v.push(id.to_string());
+            }
+        }
+        return v;
     }
 }
 
@@ -205,6 +232,7 @@ pub struct Generator {
     reg: Registers,
     var_map: VarMap,
     loop_ctx: LoopContext,
+    alignment: u8,
 }
 
 impl Generator {
@@ -218,6 +246,7 @@ impl Generator {
             var_map: VarMap::new(bytes_per_reg, &reg.bp.n),
             reg: reg,
             loop_ctx: LoopContext { break_lbl: None, continue_lbl: None },
+            alignment: 4
         }
     }
 
@@ -763,11 +792,51 @@ impl Generator {
         Ok(())
     }
 
-    fn generate_program_code(&mut self, prog: &Program) -> Result<(), CodegenError> {
-        let Program::Prog(funcs) = prog;
-        for func in funcs {
-            self.generate_function_code(func)?;
+    fn generate_global_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
+        let Declaration { id, init, ctx: _ } = decl;
+
+        self.var_map.insert_global(&id);
+
+        if let Some(expr) = init {
+            // unpack constant. we have verified that it is a constant during validation.
+            if let Expression::Constant(v) = expr {
+
+                self.emit(CodeLine::i2(".globl", &id));
+                self.emit(CodeLine::i1(".data"));
+                self.emit(CodeLine::i2(".align", &format!("{}",self.alignment)));
+                self.emit(CodeLine::lbl(&id));
+                self.emit(CodeLine::i2(".long", &format!("{}",v)));
+
+                // switch back to emitting code
+                self.emit(CodeLine::i1(".text"));
+
+                self.var_map.set_global_defined(id);
+            } else {
+                panic!("Internal error, non-constant initializer for global variable should have been caught during validation.");
+            }
+
         }
+        Ok(())
+    }
+
+    fn generate_program_code(&mut self, prog: &Program) -> Result<(), CodegenError> {
+        let Program::Prog(toplevel_items) = prog;
+        for item in toplevel_items {
+            match item {
+                ToplevelItem::Function(func) => self.generate_function_code(func)?,
+                ToplevelItem::Variable(decl) => self.generate_global_declaration_code(decl)?
+            }
+        }
+
+        // generate code for uninitialized variables
+        for gid in self.var_map.get_undefined_globals() {
+            self.emit(CodeLine::i2(".globl", &gid));
+            self.emit(CodeLine::i1(".bss"));
+            self.emit(CodeLine::i2(".align", &format!("{}",self.alignment)));
+            self.emit(CodeLine::lbl(&gid));
+            self.emit(CodeLine::i2(".zero", "4")); // size of int
+        }
+
         Ok(())
     }
 }

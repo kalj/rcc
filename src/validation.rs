@@ -1,5 +1,5 @@
 use crate::ast::AstContext;
-use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement};
+use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement, ToplevelItem};
 use std::collections::HashMap;
 
 pub struct ValidationError {
@@ -22,6 +22,7 @@ struct Func {
 struct Validator {
     errors: Vec<ValidationError>,
     function_map: HashMap<String, Func>,
+    globals_map: HashMap<String, bool>,
 }
 
 impl Validator {
@@ -29,6 +30,7 @@ impl Validator {
         Validator {
             errors: Vec::new(),
             function_map: HashMap::new(),
+            globals_map: HashMap::new(),
         }
     }
 
@@ -129,6 +131,10 @@ impl Validator {
     ) {
         let nparam = parameters.len();
 
+        if self.globals_map.contains_key(id) {
+            self.errors.push(ValidationError::new(format!("Global variable redeclared as function '{}'", id), ctx));
+        }
+
         for i in 1..nparam {
             for j in 0..i {
                 if parameters[i].id == parameters[j].id {
@@ -186,12 +192,41 @@ impl Validator {
         }
     }
 
+    fn validate_global_declaration(&mut self, decl: &Declaration) {
+
+        let Declaration { id, init, ctx } = decl;
+
+        if self.function_map.contains_key(id) {
+            self.errors.push(ValidationError::new(format!("Function redeclared as global variable '{}'", id), ctx));
+        }
+
+        if let Some(expr) = init {
+            if let Expression::Constant(_) = expr {
+                if self.globals_map.contains_key(id) && self.globals_map[id] {
+                    self.errors.push(ValidationError::new(format!("Redefinition of global variable '{}'", id), ctx));
+                } else {
+                    self.globals_map.insert(id.to_string(), true);
+                }
+            } else {
+                self.errors.push(ValidationError::new(format!("Non-constant initializer for global '{}'", id), ctx));
+            }
+        } else {
+            if !self.globals_map.contains_key(id) {
+                self.globals_map.insert(id.to_string(), false);
+            }
+        }
+    }
+
     fn validate_program(&mut self, prog: &Program) {
 
-        let Program::Prog(funcs) = prog;
+        let Program::Prog(toplevel_items) = prog;
 
-        for func in funcs {
-            self.validate_function(func);
+        for item in toplevel_items {
+
+            match item {
+                ToplevelItem::Function(func) => self.validate_function(func),
+                ToplevelItem::Variable(decl) => self.validate_global_declaration(decl),
+            }
         }
     }
 }

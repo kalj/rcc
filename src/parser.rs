@@ -7,7 +7,7 @@ use std::fmt;
 
 use crate::ast::AstContext;
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement};
+use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement, ToplevelItem};
 
 //===================================================================
 // Parsing
@@ -681,12 +681,26 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let mut functions = Vec::new();
-        while let Some(_) = self.peek() {
-            functions.push(self.parse_function()?);
+    fn parse_toplevel_item(&mut self) -> Result<ToplevelItem, ParseError> {
+
+        // we expect either
+        //    {type} {name} ( ....
+        // or
+        //    {type} {name} [ = ... ] ;
+        // determine if function by checkin the third token for '('
+        if let Token::Lparen = self.peek_n(3).unwrap().token {
+            Ok(ToplevelItem::Function(self.parse_function()?))
+        } else {
+            Ok(ToplevelItem::Variable(self.parse_declaration()?))
         }
-        Ok(Program::Prog(functions))
+    }
+
+    fn parse_program(&mut self) -> Result<Program, ParseError> {
+        let mut toplevel_items = Vec::new();
+        while let Some(_) = self.peek() {
+            toplevel_items.push(self.parse_toplevel_item()?);
+        }
+        Ok(Program::Prog(toplevel_items))
     }
 }
 
