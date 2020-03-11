@@ -200,10 +200,8 @@ impl Validator {
             } else {
                 self.errors.push(ValidationError::new(format!("Non-constant initializer for global '{}'", id), ctx));
             }
-        } else {
-            if !self.globals_map.contains_key(id) {
-                self.globals_map.insert(id.to_string(), false);
-            }
+        } else if !self.globals_map.contains_key(id) {
+            self.globals_map.insert(id.to_string(), false);
         }
     }
 

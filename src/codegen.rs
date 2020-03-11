@@ -158,7 +158,7 @@ impl VarMap {
                 v.push(id.to_string());
             }
         }
-        return v;
+        v
     }
 }
 
@@ -244,7 +244,7 @@ impl Generator {
             emit_32bit,
             label_counter: 0,
             var_map: VarMap::new(bytes_per_reg, &reg.bp.n),
-            reg: reg,
+            reg,
             loop_ctx: LoopContext { break_lbl: None, continue_lbl: None },
             alignment: 4,
         }
@@ -793,7 +793,7 @@ impl Generator {
     }
 
     fn generate_global_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
-        let Declaration { id, init, ctx: _ } = decl;
+        let Declaration { id, init, .. } = decl;
 
         self.var_map.insert_global(&id);
 
