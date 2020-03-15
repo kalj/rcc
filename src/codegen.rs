@@ -547,7 +547,8 @@ impl Generator {
             }
             Statement::Break(ctx) => {
                 if let Some(blbl) = &self.loop_ctx.break_lbl {
-                    self.emit(CodeLine::i2("jmp", blbl));
+                    let l = blbl.to_string();
+                    self.emit(CodeLine::i2("jmp", &l));
                 } else {
                     return Err(CodegenError::new(
                         "Invalid break not inside a loop or switch statement".to_string(),
@@ -557,7 +558,8 @@ impl Generator {
             }
             Statement::Continue(ctx) => {
                 if let Some(clbl) = &self.loop_ctx.continue_lbl {
-                    self.emit(CodeLine::i2("jmp", clbl));
+                    let l = clbl.to_string();
+                    self.emit(CodeLine::i2("jmp", &l));
                 } else {
                     return Err(CodegenError::new("Invalid continue not inside a loop".to_string(), ctx));
                 }
