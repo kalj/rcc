@@ -54,6 +54,10 @@ impl Validator {
         Validator { errors: Vec::new(), function_map: HashMap::new(), globals_map: HashMap::new() }
     }
 
+    fn new_error(&mut self, msg: String, ctx: &AstContext) {
+        self.errors.push(ValidationError::new(msg, ctx));
+    }
+
     fn validate_expression(&mut self, expr: &Expression) {
         match expr {
             Expression::Assign(_, _, expr, _) => self.validate_expression(expr),
@@ -73,13 +77,13 @@ impl Validator {
                 }
 
                 if !self.function_map.contains_key(name) {
-                    self.errors.push(ValidationError::new(format!("Missing declaration of function '{}'", name), ctx));
+                    self.new_error(format!("Missing declaration of function '{}'", name), ctx);
                 } else {
                     match &self.function_map[name].params {
                         None => {}
                         Some(params) => {
                             if params.len() != args.len() {
-                                self.errors.push(ValidationError::new(format!("Too many arguments to function '{}'", name), ctx));
+                                self.new_error(format!("Too many arguments to function '{}'", name), ctx);
                             }
                         }
                     }
@@ -132,9 +136,8 @@ impl Validator {
     }
 
     fn validate_declaration(&mut self, decl: &Declaration) {
-
         if let Type::Void = decl.typ {
-            self.errors.push(ValidationError::new(format!("Variable '{}' declared as void", decl.id), &decl.ctx));
+            self.new_error(format!("Variable '{}' declared as void", decl.id), &decl.ctx);
         }
 
         if let Some(expr) = &decl.init {
@@ -156,9 +159,8 @@ impl Validator {
     }
 
     fn validate_function_declaration(&mut self, id: &str, func: &Func) {
-
         if self.globals_map.contains_key(id) {
-            self.errors.push(ValidationError::new(format!("Global variable redeclared as function '{}'", id), &func.ctx));
+            self.new_error(format!("Global variable redeclared as function '{}'", id), &func.ctx);
         }
 
         // Check for repeated parameter names
@@ -169,10 +171,7 @@ impl Validator {
                     for i2 in 0..i1 {
                         if let Some(id2) = &params[i2].id {
                             if id1 == id2 {
-                                self.errors.push(ValidationError::new(
-                                    format!("Redefinition of parameter {}", id1),
-                                    &func.ctx,
-                                ));
+                                self.new_error(format!("Redefinition of parameter {}", id1), &func.ctx);
                             }
                         }
                     }
@@ -185,17 +184,24 @@ impl Validator {
 
             // check for different return types
             if old_func.ret != func.ret {
-                let msg = format!("Multiple conflicting declarations for {}, with return types {} and {}", id, old_func.ret, func.ret);
-                self.errors.push(ValidationError::new(msg, &func.ctx));
+                let msg = format!(
+                    "Multiple conflicting declarations for {}, with return types {} and {}",
+                    id, old_func.ret, func.ret
+                );
+                self.new_error(msg, &func.ctx);
             }
 
             // check for different number of parameters
             if let Some(old_params) = &old_func.params {
                 if let Some(params) = &func.params {
                     if params.len() != old_params.len() {
-                        let msg = format!("Multiple conflicting declarations for {}, with parameters ({}) and ({})",
-                                          id, params_to_string(&old_params), params_to_string(&params));
-                        self.errors.push(ValidationError::new(msg, &func.ctx));
+                        let msg = format!(
+                            "Multiple conflicting declarations for {}, with parameters ({}) and ({})",
+                            id,
+                            params_to_string(&old_params),
+                            params_to_string(&params)
+                        );
+                        self.new_error(msg, &func.ctx);
                     }
                 }
             }
@@ -223,7 +229,7 @@ impl Validator {
                 if let FunctionParameters::List(params) = parameters {
                     for param in params {
                         if param.id.is_none() {
-                            self.errors.push(ValidationError::new(format!("Missing parameter name of function '{}'", id), &param.ctx));
+                            self.new_error(format!("Missing parameter name of function '{}'", id), &param.ctx);
                         }
                     }
                 }
@@ -236,7 +242,7 @@ impl Validator {
 
                     // check if already defined
                     if f.has_definition {
-                        self.errors.push(ValidationError::new(format!("Redefinition of '{}'", id), ctx));
+                        self.new_error(format!("Redefinition of '{}'", id), ctx);
                     } else {
                         self.function_map.insert(id.to_string(), new_fdecl);
                     }
@@ -253,18 +259,18 @@ impl Validator {
         let Declaration { id, init, ctx, .. } = decl;
 
         if self.function_map.contains_key(id) {
-            self.errors.push(ValidationError::new(format!("Function redeclared as global variable '{}'", id), ctx));
+            self.new_error(format!("Function redeclared as global variable '{}'", id), ctx);
         }
 
         if let Some(expr) = init {
             if let Expression::Constant(_) = expr {
                 if self.globals_map.contains_key(id) && self.globals_map[id] {
-                    self.errors.push(ValidationError::new(format!("Redefinition of global variable '{}'", id), ctx));
+                    self.new_error(format!("Redefinition of global variable '{}'", id), ctx);
                 } else {
                     self.globals_map.insert(id.to_string(), true);
                 }
             } else {
-                self.errors.push(ValidationError::new(format!("Non-constant initializer for global '{}'", id), ctx));
+                self.new_error(format!("Non-constant initializer for global '{}'", id), ctx);
             }
         } else if !self.globals_map.contains_key(id) {
             self.globals_map.insert(id.to_string(), false);
