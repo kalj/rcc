@@ -46,7 +46,7 @@ fn main() {
     let matches = App::new("c-compiler")
         .arg(Arg::with_name("INPUT").help("The source file to compile").required(true))
         .arg(
-            Arg::with_name("output")
+            Arg::with_name("OUTPUT")
                 .short("o")
                 .long("output")
                 .value_name("OUTPUT")
@@ -76,14 +76,16 @@ fn main() {
         }
     }
 
-    let output_path: PathBuf = match matches.value_of("OUTPUT") {
-        Some(p) => PathBuf::from(p),
-        None => source_path.with_extension("s"),
+    let output_path: Option<PathBuf> = match matches.value_of("OUTPUT") {
+        Some(p) => {
+            if p == "-" {
+                None
+            } else {
+                Some(PathBuf::from(p))
+            }
+        }
+        None => Some(source_path.with_extension("s")),
     };
-
-    if verbose {
-        println!("Compiling {} -> {}...", source_path.display(), output_path.display());
-    }
 
     let source = fs::read_to_string(source_path).expect("Failed reading source file");
 
@@ -138,5 +140,16 @@ fn main() {
         }
     };
 
-    fs::write(output_path, code.get_str()).expect("Failed writing assembly output");
+    if let Some(path) = output_path {
+        if verbose {
+            println!("Writing assembly output to {}", path.display());
+        }
+
+        fs::write(path, code.get_str()).expect("Failed writing assembly output");
+    } else {
+        if verbose {
+            println!("Writing assembly output to stdout");
+        }
+        print!("{}", code.get_str());
+    }
 }
