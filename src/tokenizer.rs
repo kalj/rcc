@@ -9,7 +9,6 @@ use std::fmt;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Keyword {
-    Int,
     Return,
     If,
     Else,
@@ -18,6 +17,9 @@ pub enum Keyword {
     Do,
     Break,
     Continue,
+
+    Int,
+    Void,
 }
 
 #[derive(Debug, Clone)]
@@ -70,7 +72,6 @@ pub enum Token {
 
 fn keyword_to_str(kw: Keyword) -> String {
     match kw {
-        Keyword::Int => "int",
         Keyword::Return => "return",
         Keyword::If => "if",
         Keyword::Else => "else",
@@ -79,6 +80,9 @@ fn keyword_to_str(kw: Keyword) -> String {
         Keyword::Do => "do",
         Keyword::Break => "break",
         Keyword::Continue => "continue",
+
+        Keyword::Int => "int",
+        Keyword::Void => "void",
     }
     .to_string()
 }
@@ -217,7 +221,6 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::QuestionMark,
         Token::Colon,
         // generic patterns
-        Token::Keyword(Keyword::Int),
         Token::Keyword(Keyword::Return),
         Token::Keyword(Keyword::If),
         Token::Keyword(Keyword::Else),
@@ -226,6 +229,8 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         Token::Keyword(Keyword::Do),
         Token::Keyword(Keyword::Break),
         Token::Keyword(Keyword::Continue),
+        Token::Keyword(Keyword::Int),
+        Token::Keyword(Keyword::Void),
         Token::Identifier("a".to_string()), // with placeholder
         Token::IntLiteral(1),               // with placeholder
     ];

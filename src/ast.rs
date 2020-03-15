@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug)]
 pub enum BinaryOp {
     Addition,
@@ -48,6 +50,13 @@ pub enum FixOp {
     Dec,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Int,
+    Void,
+}
+
+#[derive(Clone)]
 pub struct AstContext {
     pub position: usize,
     pub length: usize,
@@ -66,6 +75,7 @@ pub enum Expression {
 }
 
 pub struct Declaration {
+    pub typ: Type,
     pub id: String,
     pub init: Option<Expression>,
     pub ctx: AstContext,
@@ -90,14 +100,23 @@ pub enum BlockItem {
     Decl(Declaration),
 }
 
+#[derive(Clone)]
 pub struct FunctionParameter {
-    pub id: String,
+    pub typ: Type,
+    pub id: Option<String>,
     pub ctx: AstContext,
 }
 
+#[derive(Clone)]
+pub enum FunctionParameters {
+    Unspecified,
+    Void,
+    List(Vec<FunctionParameter>),
+}
+
 pub enum Function {
-    Declaration(String, Vec<FunctionParameter>, AstContext),
-    Definition(String, Vec<FunctionParameter>, Vec<BlockItem>, AstContext),
+    Declaration(Type, String, FunctionParameters, AstContext),
+    Definition(Type, String, FunctionParameters, Vec<BlockItem>, AstContext),
 }
 
 pub enum ToplevelItem {
@@ -280,22 +299,46 @@ fn print_block_item(bkitem: &BlockItem, lvl: i32) {
     }
 }
 
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl fmt::Display for FunctionParameter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(id) = &self.id {
+            write!(f, "{} {}", self.typ, id)
+        } else {
+            write!(f, "{}", self.typ)
+        }
+    }
+}
+
+pub fn params_to_string(params: &[FunctionParameter]) -> String {
+    let parameter_strings: Vec<String> = params.iter().map(|p| format!("{}", p)).collect();
+    parameter_strings.join(", ")
+}
+
+impl fmt::Display for FunctionParameters {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            FunctionParameters::Unspecified => "".to_string(),
+            FunctionParameters::Void => "void".to_string(),
+            FunctionParameters::List(params) => params_to_string(params),
+        };
+
+        write!(f, "{}", s)
+    }
+}
+
 fn print_function(func: &Function, lvl: i32) {
     match func {
-        Function::Declaration(id, parameters, _) => {
-            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.id.to_string()).collect();
-
-            println!("{: <1$}FunctionDeclaration {2} ({3})", "", (lvl * 2) as usize, id, parameter_strings.join(", "));
+        Function::Declaration(typ, id, parameters, _) => {
+            println!("{: <1$}FunctionDeclaration {2:?} {3} ({4})", "", (lvl * 2) as usize, typ, id, parameters);
         }
-        Function::Definition(id, parameters, body, _) => {
-            let parameter_strings: Vec<String> = parameters.iter().map(|p| p.id.to_string()).collect();
-            println!(
-                "{: <1$}FunctionDefinition {2} ({3}) {{",
-                "",
-                (lvl * 2) as usize,
-                id,
-                parameter_strings.join(", ")
-            );
+        Function::Definition(typ, id, parameters, body, _) => {
+            println!("{: <1$}FunctionDefinition {2:?} {3} ({4}) {{", "", (lvl * 2) as usize, typ, id, parameters);
 
             println!("  {: <1$}Body {{", "", (lvl * 2) as usize);
             print_block_items(body, lvl + 2);

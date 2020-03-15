@@ -6,8 +6,11 @@ use std::error;
 use std::fmt;
 
 use crate::ast::AstContext;
-use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement, ToplevelItem};
+use crate::ast::{AssignmentKind, BinaryOp, FixOp, Type, UnaryOp};
+use crate::ast::{
+    BlockItem, Declaration, Expression, Function, FunctionParameter, FunctionParameters, Program, Statement,
+    ToplevelItem,
+};
 
 //===================================================================
 // Parsing
@@ -15,6 +18,14 @@ use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter
 
 fn context_from_token(tok: &TokNLoc) -> AstContext {
     AstContext { position: tok.location, length: tok.length }
+}
+
+fn token_to_type(t: &Token) -> Option<Type> {
+    match t {
+        Token::Keyword(Keyword::Int) => Some(Type::Int),
+        Token::Keyword(Keyword::Void) => Some(Type::Void),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +53,7 @@ impl error::Error for ParseError {
     }
 }
 
-fn mkperr(tok: TokNLoc, msg: &str) -> ParseError {
+fn mkperr(tok: &TokNLoc, msg: &str) -> ParseError {
     ParseError::new(tok.location, tok.length, format!("{}, got '{}'.", msg, tok.token))
 }
 
@@ -84,7 +95,7 @@ impl Parser<'_> {
         if matches(&tok.token) {
             Ok(())
         } else {
-            Err(mkperr(tok, msg))
+            Err(mkperr(&tok, msg))
         }
     }
 
@@ -141,7 +152,7 @@ impl Parser<'_> {
             }
             Token::IntLiteral(v) => Ok(Expression::Constant(*v)),
             _ => Err(mkperr(
-                tok,
+                &tok,
                 "Invalid postfix expression. \
                                  Expected int literal, (expr), or identifier \
                                  possibly with postfix operator",
@@ -177,7 +188,7 @@ impl Parser<'_> {
                     Ok(Expression::PrefixOp(FixOp::Inc, id, context_from_token(&tok)))
                 } else {
                     Err(mkperr(
-                        next_tok,
+                        &next_tok,
                         "Invalid prefix expression. Expected variable identifier after prefix increment/decrement",
                     ))
                 }
@@ -192,7 +203,7 @@ impl Parser<'_> {
                     Ok(Expression::PrefixOp(FixOp::Dec, id, context_from_token(&tok)))
                 } else {
                     Err(mkperr(
-                        next_tok,
+                        &next_tok,
                         "Invalid prefix expression. Expected variable identifier after prefix increment/decrement",
                     ))
                 }
@@ -567,17 +578,16 @@ impl Parser<'_> {
     }
 
     fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
-        // ensure we got a type (i.e. 'int')
-        self.assert_next_token(
-            |t| matches!(t, Token::Keyword(Keyword::Int)),
-            "Invalid declaration. Expected type specifier",
-        )?;
+        // ensure we got a type
+        let typtok = self.next().unwrap();
+        let typ =
+            token_to_type(&typtok.token).ok_or(mkperr(&typtok, "Invalid declaration. Expected type specifier"))?;
 
         let idtok = self.next().unwrap();
         let id = match &idtok.token {
             Token::Identifier(n) => n,
             _ => {
-                return Err(mkperr(idtok, "Invalid declaration. Expected an identifier"));
+                return Err(mkperr(&idtok, "Invalid declaration. Expected an identifier"));
             }
         };
 
@@ -593,38 +603,37 @@ impl Parser<'_> {
         // ensure last token is a semicolon
         self.ensure_semicolon("Invalid declaration")?;
 
-        Ok(Declaration { id: id.to_string(), init, ctx: context_from_token(&idtok) })
+        Ok(Declaration { typ, id: id.to_string(), init, ctx: context_from_token(&typtok) })
     }
 
     fn parse_block_item(&mut self) -> Result<BlockItem, ParseError> {
-        let bkitem = match self.peek().unwrap().token {
-            Token::Keyword(Keyword::Int) => {
-                let declaration = self.parse_declaration()?;
+        let tok = self.peek().unwrap();
+        let maybe_type = token_to_type(&tok.token);
 
-                BlockItem::Decl(declaration)
-            }
-            _ => {
-                // then we have an expression to parse
-                BlockItem::Stmt(self.parse_statement()?)
-            }
+        let bkitem = if let Some(_) = maybe_type {
+            let declaration = self.parse_declaration()?;
+
+            BlockItem::Decl(declaration)
+        } else {
+            // then we have an expression to parse
+            BlockItem::Stmt(self.parse_statement()?)
         };
 
         Ok(bkitem)
     }
 
     fn parse_function(&mut self) -> Result<Function, ParseError> {
-        // ensure first token is an Int keyword
-        self.assert_next_token(
-            |t| matches!(t, Token::Keyword(Keyword::Int)),
-            "Invalid function declarator. Expected return type",
-        )?;
+        // ensure first token is a type
+        let rettok = self.next().unwrap();
+        let rettyp =
+            token_to_type(&rettok.token).ok_or(mkperr(&rettok, "Invalid function declarator. Expected return type"))?;
 
         // next token should be an identifier
         let nametok = self.next().unwrap();
         let function_name = match &nametok.token {
             Token::Identifier(ident) => ident,
             _ => {
-                return Err(mkperr(nametok, "Invalid function declarator. Expected identifier for function name"));
+                return Err(mkperr(&nametok, "Invalid function declarator. Expected identifier for function name"));
             }
         };
 
@@ -634,50 +643,61 @@ impl Parser<'_> {
         // parse the parameter ids
         let mut parameter_list = Vec::new();
 
-        if let Token::Keyword(Keyword::Int) = self.peek().unwrap().token {
-            self.next(); // consume parameter type (int)
-
-            // read parameter id
-            let tok = self.next().unwrap();
-            match &tok.token {
-                Token::Identifier(id) => {
-                    parameter_list.push(FunctionParameter { id: id.to_string(), ctx: context_from_token(&tok) });
-                }
-                _ => return Err(mkperr(tok, "Invalid function declarator. Expected identifier")),
+        let typtok = self.peek().unwrap();
+        let funparams = match token_to_type(&typtok.token) {
+            None => FunctionParameters::Unspecified,
+            Some(Type::Void) => {
+                self.next(); // consume the 'void'
+                FunctionParameters::Void
             }
+            Some(typ1) => {
+                self.next(); // consume parameter type
 
-            while let Token::Comma = self.peek().unwrap().token {
-                self.next(); // consume comma
-
-                // ensure next token is 'int'
-                self.assert_next_token(
-                    |t| matches!(t, Token::Keyword(Keyword::Int)),
-                    "Invalid function declarator. Expected type after comma",
-                )?;
-
-                let tok = self.next().unwrap();
-                match &tok.token {
+                // read parameter id
+                let id1 = match self.peek().unwrap().token {
                     Token::Identifier(id) => {
-                        parameter_list.push(FunctionParameter { id: id.to_string(), ctx: context_from_token(&tok) });
+                        self.next(); // consume the id
+                        Some(id)
                     }
-                    _ => {
-                        return Err(mkperr(tok, "Invalid function parameter list. Expected identifier after type"));
-                    }
+                    _ => None,
+                };
+
+                parameter_list.push(FunctionParameter { typ: typ1, id: id1, ctx: context_from_token(&typtok) });
+
+                while let Token::Comma = self.peek().unwrap().token {
+                    self.next(); // consume comma
+
+                    // ensure next token is a type
+                    let typtok = self.next().unwrap();
+                    let typ = token_to_type(&typtok.token)
+                        .ok_or(mkperr(&typtok, "Invalid function declarator. Expected type after comma"))?;
+
+                    let id = match self.peek().unwrap().token {
+                        Token::Identifier(id) => {
+                            self.next(); // consume the id
+                            Some(id)
+                        }
+                        _ => None,
+                    };
+
+                    parameter_list.push(FunctionParameter { typ, id, ctx: context_from_token(&typtok) });
                 }
+
+                FunctionParameters::List(parameter_list)
             }
-        }
+        };
 
         // ensure next token is ')'
         self.assert_next_token(|t| matches!(t, Token::Rparen), "Invalid function declarator. Expected ')'")?;
 
         if let Token::Semicolon = self.peek().unwrap().token {
             self.next(); // consume semicolon
-            Ok(Function::Declaration(function_name.to_string(), parameter_list, context_from_token(&nametok)))
+            Ok(Function::Declaration(rettyp, function_name.to_string(), funparams, context_from_token(&nametok)))
         } else {
             // parse body
             let body = self.parse_compound_statement()?;
 
-            Ok(Function::Definition(function_name.to_string(), parameter_list, body, context_from_token(&nametok)))
+            Ok(Function::Definition(rettyp, function_name.to_string(), funparams, body, context_from_token(&rettok)))
         }
     }
 

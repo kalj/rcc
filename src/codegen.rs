@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ast::AstContext;
 use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
-use crate::ast::{BlockItem, Declaration, Expression, Function, Program, Statement, ToplevelItem};
+use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameters, Program, Statement, ToplevelItem};
 
 //===================================================================
 // Code generation
@@ -543,7 +543,7 @@ impl Generator {
     }
 
     fn generate_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
-        let Declaration { id, init, ctx } = decl;
+        let Declaration { id, init, ctx, .. } = decl;
         if self.var_map.block_decl(&id) {
             return Err(CodegenError::new(format!("Variable {} already declared in block", id), &ctx));
         }
@@ -745,8 +745,8 @@ impl Generator {
 
     fn generate_function_code(&mut self, func: &Function) -> Result<(), CodegenError> {
         match func {
-            Function::Declaration(_, _, _) => {}
-            Function::Definition(name, parameters, body, _) => {
+            Function::Declaration(_, _, _, _) => {}
+            Function::Definition(_, name, parameters, body, _) => {
                 self.emit(CodeLine::i2(".globl", name));
                 self.emit(CodeLine::lbl(name));
                 self.emit(CodeLine::i2("push", &self.reg.bp.n));

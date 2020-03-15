@@ -1,5 +1,9 @@
+use crate::ast::params_to_string;
 use crate::ast::AstContext;
-use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameter, Program, Statement, ToplevelItem};
+use crate::ast::{
+    BlockItem, Declaration, Expression, Function, FunctionParameter, FunctionParameters, Program, Statement,
+    ToplevelItem, Type,
+};
 use std::collections::HashMap;
 
 pub struct ValidationError {
@@ -14,9 +18,29 @@ impl ValidationError {
     }
 }
 
+#[derive(Clone)]
 struct Func {
-    nparam: usize,
-    defined: bool,
+    params: Option<Vec<FunctionParameter>>,
+    ret: Type,
+    has_definition: bool,
+    ctx: AstContext,
+}
+
+impl Func {
+    fn new(ret: &Type, fparams: &FunctionParameters, has_def: bool, ctx: &AstContext) -> Func {
+        let params = match fparams {
+            FunctionParameters::Void => Some(Vec::new()),
+            FunctionParameters::List(l) => Some(l.clone()),
+            FunctionParameters::Unspecified => {
+                if has_def {
+                    Some(Vec::new())
+                } else {
+                    None
+                }
+            }
+        };
+        Func { ret: ret.clone(), params: params, has_definition: has_def, ctx: ctx.clone() }
+    }
 }
 
 struct Validator {
@@ -50,8 +74,15 @@ impl Validator {
 
                 if !self.function_map.contains_key(name) {
                     self.errors.push(ValidationError::new(format!("Missing declaration of function '{}'", name), ctx));
-                } else if self.function_map[name].nparam != args.len() {
-                    self.errors.push(ValidationError::new(format!("Too many arguments to function '{}'", name), ctx));
+                } else {
+                    match &self.function_map[name].params {
+                        None => {}
+                        Some(params) => {
+                            if params.len() != args.len() {
+                                self.errors.push(ValidationError::new(format!("Too many arguments to function '{}'", name), ctx));
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -101,6 +132,11 @@ impl Validator {
     }
 
     fn validate_declaration(&mut self, decl: &Declaration) {
+
+        if let Type::Void = decl.typ {
+            self.errors.push(ValidationError::new(format!("Variable '{}' declared as void", decl.id), &decl.ctx));
+        }
+
         if let Some(expr) = &decl.init {
             self.validate_expression(&expr);
         }
@@ -119,63 +155,93 @@ impl Validator {
         }
     }
 
-    fn validate_function_declaration(&mut self, id: &str, parameters: &[FunctionParameter], ctx: &AstContext) {
-        let nparam = parameters.len();
+    fn validate_function_declaration(&mut self, id: &str, func: &Func) {
 
         if self.globals_map.contains_key(id) {
-            self.errors.push(ValidationError::new(format!("Global variable redeclared as function '{}'", id), ctx));
+            self.errors.push(ValidationError::new(format!("Global variable redeclared as function '{}'", id), &func.ctx));
         }
 
-        for i in 1..nparam {
-            for j in 0..i {
-                if parameters[i].id == parameters[j].id {
-                    self.errors.push(ValidationError::new(
-                        format!("Redefinition of parameter {}", parameters[i].id),
-                        &parameters[i].ctx,
-                    ));
+        // Check for repeated parameter names
+        if let Some(params) = &func.params {
+            let nparam = params.len();
+            for i1 in 1..nparam {
+                if let Some(id1) = &params[i1].id {
+                    for i2 in 0..i1 {
+                        if let Some(id2) = &params[i2].id {
+                            if id1 == id2 {
+                                self.errors.push(ValidationError::new(
+                                    format!("Redefinition of parameter {}", id1),
+                                    &func.ctx,
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }
 
         if self.function_map.contains_key(id) {
-            let f = &self.function_map[id];
+            let old_func = self.function_map[id].clone();
+
+            // check for different return types
+            if old_func.ret != func.ret {
+                let msg = format!("Multiple conflicting declarations for {}, with return types {} and {}", id, old_func.ret, func.ret);
+                self.errors.push(ValidationError::new(msg, &func.ctx));
+            }
 
             // check for different number of parameters
-            if f.nparam != nparam {
-                self.errors.push(ValidationError::new(
-                    format!(
-                        "Multiple conflicting declarations for {}, with {} and {} parameters",
-                        id, f.nparam, nparam
-                    ),
-                    ctx,
-                ));
+            if let Some(old_params) = &old_func.params {
+                if let Some(params) = &func.params {
+                    if params.len() != old_params.len() {
+                        let msg = format!("Multiple conflicting declarations for {}, with parameters ({}) and ({})",
+                                          id, params_to_string(&old_params), params_to_string(&params));
+                        self.errors.push(ValidationError::new(msg, &func.ctx));
+                    }
+                }
             }
         }
     }
 
     fn validate_function(&mut self, func: &Function) {
         match func {
-            Function::Declaration(id, parameters, ctx) => {
-                self.validate_function_declaration(id, parameters, ctx);
+            Function::Declaration(rettyp, id, parameters, ctx) => {
+                let new_fdecl = Func::new(rettyp, parameters, false, ctx);
 
-                if !self.function_map.contains_key(id) {
-                    self.function_map.insert(id.to_string(), Func { nparam: parameters.len(), defined: false });
+                self.validate_function_declaration(id, &new_fdecl);
+
+                if self.function_map.contains_key(id) && !self.function_map[id].has_definition {
+                    // update parameters if not defined
+                    if let FunctionParameters::Unspecified = parameters {
+                    } else {
+                        self.function_map.insert(id.to_string(), new_fdecl);
+                    }
+                } else {
+                    self.function_map.insert(id.to_string(), new_fdecl);
                 }
             }
-            Function::Definition(id, parameters, body, ctx) => {
-                self.validate_function_declaration(id, parameters, ctx);
+            Function::Definition(rettyp, id, parameters, body, ctx) => {
+                if let FunctionParameters::List(params) = parameters {
+                    for param in params {
+                        if param.id.is_none() {
+                            self.errors.push(ValidationError::new(format!("Missing parameter name of function '{}'", id), &param.ctx));
+                        }
+                    }
+                }
+
+                let new_fdecl = Func::new(rettyp, parameters, true, ctx);
+                self.validate_function_declaration(id, &new_fdecl);
 
                 if self.function_map.contains_key(id) {
                     let f = &self.function_map[id];
 
                     // check if already defined
-                    if f.defined {
+                    if f.has_definition {
                         self.errors.push(ValidationError::new(format!("Redefinition of '{}'", id), ctx));
                     } else {
-                        self.function_map.get_mut(id).unwrap().defined = true;
+                        self.function_map.insert(id.to_string(), new_fdecl);
                     }
                 } else {
-                    self.function_map.insert(id.to_string(), Func { nparam: parameters.len(), defined: true });
+                    self.function_map.insert(id.to_string(), new_fdecl);
                 }
 
                 self.validate_block_items(body);
@@ -184,7 +250,7 @@ impl Validator {
     }
 
     fn validate_global_declaration(&mut self, decl: &Declaration) {
-        let Declaration { id, init, ctx } = decl;
+        let Declaration { id, init, ctx, .. } = decl;
 
         if self.function_map.contains_key(id) {
             self.errors.push(ValidationError::new(format!("Function redeclared as global variable '{}'", id), ctx));
