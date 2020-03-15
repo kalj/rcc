@@ -3,7 +3,7 @@ use std::error;
 use std::fmt;
 
 use crate::ast::AstContext;
-use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
+use crate::ast::{AssignmentKind, BinaryOp, FixOp, Type, UnaryOp};
 use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameters, Program, Statement, ToplevelItem};
 
 //===================================================================
@@ -539,8 +539,10 @@ impl Generator {
 
     fn generate_statement_code(&mut self, stmnt: &Statement) -> Result<(), CodegenError> {
         match stmnt {
-            Statement::Return(expr) => {
-                self.generate_expression_code(&expr)?;
+            Statement::Return(maybe_expr) => {
+                if let Some(expr) = maybe_expr {
+                    self.generate_expression_code(&expr)?;
+                }
                 self.emit(CodeLine::i3("mov", &self.reg.bp.n, &self.reg.sp.n));
                 self.emit(CodeLine::i2("pop", &self.reg.bp.n));
                 self.emit(CodeLine::i1("ret"));
@@ -728,7 +730,7 @@ impl Generator {
     fn generate_function_code(&mut self, func: &Function) -> Result<(), CodegenError> {
         match func {
             Function::Declaration(_, _, _, _) => {}
-            Function::Definition(_, name, parameters, body, _) => {
+            Function::Definition(rettyp, name, parameters, body, _) => {
                 self.emit(CodeLine::i2(".globl", name));
                 self.emit(CodeLine::lbl(name));
                 self.emit(CodeLine::i2("push", &self.reg.bp.n));
@@ -761,7 +763,11 @@ impl Generator {
                 self.restore_scope(old_scope);
 
                 if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
-                    self.generate_statement_code(&Statement::Return(Expression::Constant(0)))?;
+                    println!("Adding missing return statement");
+                    match rettyp {
+                        Type::Void => self.generate_statement_code(&Statement::Return(None))?,
+                        Type::Int => self.generate_statement_code(&Statement::Return(Some(Expression::Constant(0))))?,
+                    };
                 }
             }
         }

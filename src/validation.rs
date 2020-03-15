@@ -95,7 +95,11 @@ impl Validator {
 
     fn validate_statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Return(expr) => self.validate_expression(expr),
+            Statement::Return(maybe_expr) => {
+                if let Some(expr) = maybe_expr {
+                    self.validate_expression(expr)
+                }
+            }
             Statement::Expr(expr) => self.validate_expression(expr),
             Statement::If(cond, ifbody, elsebody) => {
                 self.validate_expression(cond);

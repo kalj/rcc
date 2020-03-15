@@ -421,9 +421,12 @@ impl Parser<'_> {
             }
             Token::Keyword(Keyword::Return) => {
                 self.next(); // consume
-                let expr = self.parse_expression()?;
+                let maybe_expr = match self.peek().unwrap().token {
+                    Token::Semicolon => None,
+                    _ => Some(self.parse_expression()?),
+                };
                 self.ensure_semicolon("Invalid return statement")?;
-                Statement::Return(expr)
+                Statement::Return(maybe_expr)
             }
             Token::Keyword(Keyword::Continue) => {
                 let tok = self.next().unwrap(); // consume
