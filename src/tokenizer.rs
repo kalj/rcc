@@ -241,7 +241,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
         if let Some(captures) = re.captures(&source[cursor..]) {
             return match t {
                 Token::Identifier(_) => {
-                    let ident_cap = captures.get(1).expect("asdfb");
+                    let ident_cap = captures.get(1).expect("Failed capturing identifier");
                     let ident = ident_cap.as_str().to_string();
                     Ok(Token::Identifier(ident))
                 }
