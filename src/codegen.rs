@@ -196,14 +196,7 @@ impl Registers {
                 dx: Register::new("%edx", "%edx"),
                 bp: Register::new("%ebp", "%ebp"),
                 sp: Register::new("%esp", "%esp"),
-                args: vec![
-                    Register::new("%edi", "%edi"),
-                    Register::new("%esi", "%esi"),
-                    Register::new("%edx", "%edx"),
-                    Register::new("%ecx", "%ecx"),
-                    Register::new("%r8d", "%r8d"),
-                    Register::new("%r9d", "%r9d"),
-                ],
+                args: Vec::new(),
             }
         } else {
             Registers {
@@ -506,36 +499,23 @@ impl Generator {
                 self.emit(CodeLine::lbl(&end));
             }
             Expression::FunctionCall(id, args, _) => {
-                if self.emit_32bit {
-                    // evaluate arguments and push on stack in reverse order
-                    for arg in args.iter().rev() {
-                        self.generate_expression_code(arg)?;
+                let narg_regs = self.reg.args.len();
+
+                // evaluate arguments and push on stack (or put in registers) in reverse order
+                for (iarg, arg) in args.iter().enumerate().rev() {
+                    self.generate_expression_code(arg)?;
+                    if iarg >= narg_regs {
                         self.emit(CodeLine::i2("push", &self.reg.ax.n));
+                    } else {
+                        self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.args[iarg].n32));
                     }
+                }
 
-                    self.emit(CodeLine::i2("call", id));
-                    if !args.is_empty() {
-                        let offset_literal = format!("${}", 4 * args.len());
-                        self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
-                    }
-                } else {
-                    let nargs = args.len();
-
-                    for i in 0..nargs {
-                        let iarg = nargs - 1 - i;
-                        self.generate_expression_code(&args[iarg])?;
-                        if iarg >= self.reg.args.len() {
-                            self.emit(CodeLine::i2("push", &self.reg.ax.n));
-                        } else {
-                            self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.args[iarg].n32));
-                        }
-                    }
-
-                    self.emit(CodeLine::i2("call", &id));
-                    if args.len() > 6 {
-                        let offset_literal = format!("${}", 8 * (args.len() - 6));
-                        self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
-                    }
+                self.emit(CodeLine::i2("call", &id));
+                if args.len() > narg_regs {
+                    let n_stack_args = args.len() - narg_regs;
+                    let offset_literal = format!("${}", (self.var_map.regsize as usize) * n_stack_args);
+                    self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
                 }
             }
         }
@@ -755,26 +735,20 @@ impl Generator {
                 let old_scope = self.new_scope();
 
                 //add parameters to variable map
+                let narg_regs = self.reg.args.len();
 
-                if self.emit_32bit {
-                    // evaluate arguments and push on stack in reverse order
-                    for (i, p) in parameters.iter().enumerate() {
-                        // 4 extra for the stack pointer which will be pushed
-                        let stack_offset = 4 + 4 * (1 + i as i32);
-                        self.var_map.insert_arg(&p.id, stack_offset);
-                    }
-                } else {
-                    let narg_regs = self.reg.args.len();
-
-                    for (i, p) in parameters.iter().enumerate() {
+                // evaluate arguments and push on stack in reverse order
+                if let FunctionParameters::List(params) = parameters {
+                    for (i, p) in params.iter().enumerate() {
+                        let id = p.id.as_ref().unwrap();
                         if i < narg_regs {
-                            //  push value on stack at known index
+                            // push value on stack at known index
                             self.emit(CodeLine::i2("push", &self.reg.args[i].n));
-                            self.var_map.insert_local(&p.id); //      save new variable
+                            self.var_map.insert_local(&id); // save new variable
                         } else {
-                            // 8 extra for the stack pointer which will be pushed
-                            let stack_offset = 8 + 8 * (1 + i - narg_regs);
-                            self.var_map.insert_arg(&p.id, stack_offset as i32);
+                            // `regsize` extra for the stack pointer which will be pushed
+                            let stack_offset = (self.var_map.regsize as usize) * (1 + 1 + i - narg_regs);
+                            self.var_map.insert_arg(&id, stack_offset as i32);
                         }
                     }
                 }
