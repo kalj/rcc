@@ -1,14 +1,12 @@
 #!/bin/bash
 
-test_stages=$(echo k {1..8})
+test_stages=$(echo {1..10} extraops void )
 
 
 cd wacc
-output=$(./test_compiler.sh ../build.sh $test_stages)
+./test_compiler.sh ../build.sh $test_stages
 
 res=$?
-
-echo "$output"  | fgrep -v '....OK'
 
 if [ $res -ne 0 ] ; then
     echo "TEST FAILED"
