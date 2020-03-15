@@ -584,7 +584,7 @@ impl Parser<'_> {
         // ensure we got a type
         let typtok = self.next().unwrap();
         let typ =
-            token_to_type(&typtok.token).ok_or(mkperr(&typtok, "Invalid declaration. Expected type specifier"))?;
+            token_to_type(&typtok.token).ok_or_else(|| mkperr(&typtok, "Invalid declaration. Expected type specifier"))?;
 
         let idtok = self.next().unwrap();
         let id = match &idtok.token {
@@ -610,10 +610,9 @@ impl Parser<'_> {
     }
 
     fn parse_block_item(&mut self) -> Result<BlockItem, ParseError> {
-        let tok = self.peek().unwrap();
-        let maybe_type = token_to_type(&tok.token);
+        let maybe_type = token_to_type(&self.peek().unwrap().token);
 
-        let bkitem = if let Some(_) = maybe_type {
+        let bkitem = if maybe_type.is_some() {
             let declaration = self.parse_declaration()?;
 
             BlockItem::Decl(declaration)
@@ -629,7 +628,7 @@ impl Parser<'_> {
         // ensure first token is a type
         let rettok = self.next().unwrap();
         let rettyp =
-            token_to_type(&rettok.token).ok_or(mkperr(&rettok, "Invalid function declarator. Expected return type"))?;
+            token_to_type(&rettok.token).ok_or_else(|| mkperr(&rettok, "Invalid function declarator. Expected return type"))?;
 
         // next token should be an identifier
         let nametok = self.next().unwrap();
@@ -673,7 +672,7 @@ impl Parser<'_> {
                     // ensure next token is a type
                     let typtok = self.next().unwrap();
                     let typ = token_to_type(&typtok.token)
-                        .ok_or(mkperr(&typtok, "Invalid function declarator. Expected type after comma"))?;
+                        .ok_or_else(|| mkperr(&typtok, "Invalid function declarator. Expected type after comma"))?;
 
                     let id = match self.peek().unwrap().token {
                         Token::Identifier(id) => {

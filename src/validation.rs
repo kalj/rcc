@@ -39,7 +39,7 @@ impl Func {
                 }
             }
         };
-        Func { ret: ret.clone(), params: params, has_definition: has_def, ctx: ctx.clone() }
+        Func { ret: ret.clone(), params, has_definition: has_def, ctx: ctx.clone() }
     }
 }
 
@@ -169,11 +169,10 @@ impl Validator {
 
         // Check for repeated parameter names
         if let Some(params) = &func.params {
-            let nparam = params.len();
-            for i1 in 1..nparam {
+            for i1 in 1..params.len() {
                 if let Some(id1) = &params[i1].id {
-                    for i2 in 0..i1 {
-                        if let Some(id2) = &params[i2].id {
+                    for p2 in params.iter().take(i1) {
+                        if let Some(id2) = &p2.id {
                             if id1 == id2 {
                                 self.new_error(format!("Redefinition of parameter {}", id1), &func.ctx);
                             }
