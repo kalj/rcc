@@ -1,6 +1,6 @@
 #!/bin/bash
 
-test_stages=$(echo {1..10} extraops void )
+test_stages=$(echo {1..10} extraops void ptrs )
 
 
 cd wacc
