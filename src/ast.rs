@@ -83,7 +83,7 @@ pub struct Declaration {
 
 pub enum Statement {
     Null,
-    Return(Option<Expression>),
+    Return(Option<Expression>, AstContext),
     Expr(Expression),
     If(Expression, Box<Statement>, Option<Box<Statement>>),
     Compound(Vec<BlockItem>),
@@ -183,7 +183,7 @@ fn print_block_items(bkitems: &[BlockItem], lvl: i32) {
 
 fn print_statement(stmt: &Statement, lvl: i32) {
     match stmt {
-        Statement::Return(maybe_expr) => {
+        Statement::Return(maybe_expr, _) => {
             if let Some(expr) = maybe_expr {
                 println!("{: <1$}Return {{", "", (lvl * 2) as usize);
                 print_expression(expr, lvl + 1);

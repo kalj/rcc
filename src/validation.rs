@@ -47,11 +47,12 @@ struct Validator {
     errors: Vec<ValidationError>,
     function_map: HashMap<String, Func>,
     globals_map: HashMap<String, bool>,
+    current_rettype: Option<Type>
 }
 
 impl Validator {
     fn new() -> Validator {
-        Validator { errors: Vec::new(), function_map: HashMap::new(), globals_map: HashMap::new() }
+        Validator { errors: Vec::new(), function_map: HashMap::new(), globals_map: HashMap::new(), current_rettype: None }
     }
 
     fn new_error(&mut self, msg: String, ctx: &AstContext) {
@@ -95,11 +96,26 @@ impl Validator {
 
     fn validate_statement(&mut self, stmt: &Statement) {
         match stmt {
-            Statement::Return(maybe_expr) => {
+            Statement::Return(maybe_expr, ctx) => {
+
+                match self.current_rettype.as_ref().unwrap() {
+                    Type::Void => {
+                        if maybe_expr.is_some() {
+                            self.new_error(format!("Return with value in void function"), ctx);
+                        }
+                    }
+                    _ => {
+                        if maybe_expr.is_none() {
+                            self.new_error(format!("Return without value in non-void function"), ctx);
+                        }
+                    }
+                }
+
                 if let Some(expr) = maybe_expr {
                     self.validate_expression(expr)
                 }
             }
+
             Statement::Expr(expr) => self.validate_expression(expr),
             Statement::If(cond, ifbody, elsebody) => {
                 self.validate_expression(cond);
@@ -253,7 +269,11 @@ impl Validator {
                     self.function_map.insert(id.to_string(), new_fdecl);
                 }
 
+                self.current_rettype = Some(rettyp.clone());
+
                 self.validate_block_items(body);
+
+                self.current_rettype = None;
             }
         }
     }

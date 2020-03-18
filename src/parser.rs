@@ -414,27 +414,28 @@ impl Parser<'_> {
     }
 
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
-        let stmt = match self.peek().unwrap().token {
+        let tok = self.peek().unwrap();
+        let stmt = match &tok.token {
             Token::Lbrace => {
                 let comp = self.parse_compound_statement()?;
                 Statement::Compound(comp)
             }
-            Token::Keyword(Keyword::Return) => {
+            Token::Keyword(Keyword::Return ) => {
                 self.next(); // consume
                 let maybe_expr = match self.peek().unwrap().token {
                     Token::Semicolon => None,
                     _ => Some(self.parse_expression()?),
                 };
                 self.ensure_semicolon("Invalid return statement")?;
-                Statement::Return(maybe_expr)
+                Statement::Return(maybe_expr, context_from_token(&tok))
             }
             Token::Keyword(Keyword::Continue) => {
-                let tok = self.next().unwrap(); // consume
+                self.next().unwrap(); // consume
                 self.ensure_semicolon("Invalid continue statement")?;
                 Statement::Continue(context_from_token(&tok))
             }
             Token::Keyword(Keyword::Break) => {
-                let tok = self.next().unwrap(); // consume
+                self.next().unwrap(); // consume
                 self.ensure_semicolon("Invalid break statement")?;
                 Statement::Break(context_from_token(&tok))
             }

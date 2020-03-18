@@ -537,15 +537,20 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_return_statement_code(&mut self, maybe_expr: &Option<Expression>) -> Result<(), CodegenError> {
+        if let Some(expr) = maybe_expr {
+            self.generate_expression_code(&expr)?;
+        }
+        self.emit(CodeLine::i3("mov", &self.reg.bp.n, &self.reg.sp.n));
+        self.emit(CodeLine::i2("pop", &self.reg.bp.n));
+        self.emit(CodeLine::i1("ret"));
+        Ok(())
+    }
+
     fn generate_statement_code(&mut self, stmnt: &Statement) -> Result<(), CodegenError> {
         match stmnt {
-            Statement::Return(maybe_expr) => {
-                if let Some(expr) = maybe_expr {
-                    self.generate_expression_code(&expr)?;
-                }
-                self.emit(CodeLine::i3("mov", &self.reg.bp.n, &self.reg.sp.n));
-                self.emit(CodeLine::i2("pop", &self.reg.bp.n));
-                self.emit(CodeLine::i1("ret"));
+            Statement::Return(maybe_expr, _) => {
+                self.generate_return_statement_code(&maybe_expr)?;
             }
             Statement::Break(ctx) => {
                 if let Some(blbl) = &self.loop_ctx.break_lbl {
@@ -763,10 +768,9 @@ impl Generator {
                 self.restore_scope(old_scope);
 
                 if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
-                    println!("Adding missing return statement");
                     match rettyp {
-                        Type::Void => self.generate_statement_code(&Statement::Return(None))?,
-                        Type::Int => self.generate_statement_code(&Statement::Return(Some(Expression::Constant(0))))?,
+                        Type::Void => self.generate_return_statement_code(&None)?,
+                        Type::Int => self.generate_return_statement_code(&Some(Expression::Constant(0)))?,
                     };
                 }
             }
