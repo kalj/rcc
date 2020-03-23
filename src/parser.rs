@@ -104,7 +104,7 @@ impl Parser<'_> {
         self.assert_next_token(|t| matches!(t, Token::Semicolon), &format!("{}. Expected a final semicolon", msg))
     }
 
-    fn parse_postfix_expression(&mut self) -> Result<Expression, ParseError> {
+    fn parse_prim(&mut self) -> Result<Expression, ParseError> {
         let tok = self.next().unwrap();
         match &tok.token {
             Token::Lparen => {
@@ -114,14 +114,6 @@ impl Parser<'_> {
             }
             Token::Identifier(id) => {
                 match self.peek().unwrap().token {
-                    Token::Increment => {
-                        self.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Inc, id.to_string(), context_from_token(&tok)))
-                    }
-                    Token::Decrement => {
-                        self.next(); // consume
-                        Ok(Expression::PostfixOp(FixOp::Dec, id.to_string(), context_from_token(&tok)))
-                    }
                     Token::Lparen => {
                         self.next(); // consume
 
@@ -151,61 +143,61 @@ impl Parser<'_> {
                 }
             }
             Token::IntLiteral(v) => Ok(Expression::Constant(*v)),
-            _ => Err(mkperr(
-                &tok,
-                "Invalid postfix expression. \
-                                 Expected int literal, (expr), or identifier \
-                                 possibly with postfix operator",
-            )),
+            _ => Err(mkperr(&tok, "Invalid primary expression. Expected int literal, (expr), or identifier")),
+        }
+    }
+
+    fn parse_postfix_expression(&mut self) -> Result<Expression, ParseError> {
+        let inittok = self.peek().unwrap();
+
+        let expr = self.parse_prim()?;
+
+        let maybe_fop = match self.peek().unwrap().token {
+            Token::Increment => Some(FixOp::Inc),
+            Token::Decrement => Some(FixOp::Dec),
+            _ => None,
+        };
+
+        if let Some(fop) = maybe_fop {
+            self.next(); // consume
+
+            if let Expression::Variable(id,_) = expr {
+                Ok(Expression::PostfixOp(fop, id.to_string(), context_from_token(&inittok)))
+            } else {
+                Err(mkperr(&inittok, "Invalid postfix expression. Expected identifier before posfix operator"))
+            }
+        } else {
+            Ok(expr)
         }
     }
 
     fn parse_prefix_expression(&mut self) -> Result<Expression, ParseError> {
         let tok = self.peek().unwrap();
         match tok.token {
-            Token::Minus => {
+            Token::Minus | Token::Not | Token::Complement => {
                 self.next(); // consume
-                let operand = self.parse_prefix_expression()?;
-                Ok(Expression::UnaryOp(UnaryOp::Negate, Box::new(operand)))
-            }
-            Token::Not => {
-                self.next(); // consume
-                let operand = self.parse_prefix_expression()?;
-                Ok(Expression::UnaryOp(UnaryOp::Not, Box::new(operand)))
-            }
-            Token::Complement => {
-                self.next(); // consume
-                let operand = self.parse_prefix_expression()?;
-                Ok(Expression::UnaryOp(UnaryOp::Complement, Box::new(operand)))
-            }
-            Token::Increment => {
-                self.next(); // consume
+                let uop = match tok.token {
+                    Token::Minus => Some(UnaryOp::Negate),
+                    Token::Not => Some(UnaryOp::Not),
+                    Token::Complement => Some(UnaryOp::Complement),
+                    _ => None,
+                };
 
-                let next_tok = self.peek().unwrap(); // for mkperr message
+                let operand = self.parse_prefix_expression()?;
+                Ok(Expression::UnaryOp(uop.unwrap(), Box::new(operand)))
+            }
+            Token::Increment | Token::Decrement => {
+                self.next(); // consume
+                let fop = match tok.token {
+                    Token::Increment => FixOp::Inc,
+                    _ => FixOp::Dec,
+                };
 
                 let operand = self.parse_postfix_expression()?;
                 if let Expression::Variable(id, _) = operand {
-                    Ok(Expression::PrefixOp(FixOp::Inc, id, context_from_token(&tok)))
+                    Ok(Expression::PrefixOp(fop, id.to_string(), context_from_token(&tok)))
                 } else {
-                    Err(mkperr(
-                        &next_tok,
-                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement",
-                    ))
-                }
-            }
-            Token::Decrement => {
-                self.next(); // consume
-
-                let next_tok = self.peek().unwrap(); // for mkperr message
-
-                let operand = self.parse_postfix_expression()?;
-                if let Expression::Variable(id, _) = operand {
-                    Ok(Expression::PrefixOp(FixOp::Dec, id, context_from_token(&tok)))
-                } else {
-                    Err(mkperr(
-                        &next_tok,
-                        "Invalid prefix expression. Expected variable identifier after prefix increment/decrement",
-                    ))
+                    Err(mkperr(&tok, "Invalid prefix expression. Expected identifier after prefix operator"))
                 }
             }
             _ => self.parse_postfix_expression(),
