@@ -3,9 +3,6 @@ use clap::{App, Arg};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[macro_use]
-extern crate matches;
-
 mod tokenizer;
 use tokenizer::tokenize;
 
