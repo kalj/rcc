@@ -50,3 +50,5 @@ as --${BITS} -o $object_file $assembly_file
 
 if [[ $VERBOSE ]] ; then echo "Linking ${object_file} -> ${prog_name}" ; fi
 ld ${LINK_FLAGS} -o $prog_name $object_file
+
+rm $object_file $assembly_file
