@@ -1,10 +1,10 @@
-use crate::ast::params_to_string;
 use crate::ast::AstContext;
-use crate::ast::{
-    BlockItem, Declaration, Expression, Function, FunctionParameter, FunctionParameters, Program, Statement,
-    ToplevelItem, Type,
-};
-use std::collections::HashMap;
+use crate::ast::{BasicType, Type};
+use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameters, Program, Statement, ToplevelItem};
+use crate::evaluation::TypeError;
+use crate::evaluation::{expression_type, is_constant_expression, is_lvalue_expression};
+use crate::symbol_table::{FunctionSymbol, GlobalVariableSymbol, LocalVariableSymbol, SymbolTable};
+use std::cmp::Ordering;
 
 pub struct ValidationError {
     pub message: String,
@@ -16,43 +16,21 @@ impl ValidationError {
     fn new(message: String, ctx: &AstContext) -> ValidationError {
         ValidationError { message, position: ctx.position, length: ctx.length }
     }
-}
 
-#[derive(Clone)]
-struct Func {
-    params: Option<Vec<FunctionParameter>>,
-    ret: Type,
-    has_definition: bool,
-    ctx: AstContext,
-}
-
-impl Func {
-    fn new(ret: &Type, fparams: &FunctionParameters, has_def: bool, ctx: &AstContext) -> Func {
-        let params = match fparams {
-            FunctionParameters::Void => Some(Vec::new()),
-            FunctionParameters::List(l) => Some(l.clone()),
-            FunctionParameters::Unspecified => {
-                if has_def {
-                    Some(Vec::new())
-                } else {
-                    None
-                }
-            }
-        };
-        Func { ret: ret.clone(), params, has_definition: has_def, ctx: ctx.clone() }
+    fn from_type_error(terr: &TypeError) -> ValidationError {
+        ValidationError { message: terr.message.to_string(), position: terr.position, length: terr.length }
     }
 }
 
 struct Validator {
     errors: Vec<ValidationError>,
-    function_map: HashMap<String, Func>,
-    globals_map: HashMap<String, bool>,
-    current_rettype: Option<Type>
+    current_rettype: Option<Type>,
+    symtab: SymbolTable,
 }
 
 impl Validator {
     fn new() -> Validator {
-        Validator { errors: Vec::new(), function_map: HashMap::new(), globals_map: HashMap::new(), current_rettype: None }
+        Validator { errors: Vec::new(), current_rettype: None, symtab: SymbolTable::new() }
     }
 
     fn new_error(&mut self, msg: String, ctx: &AstContext) {
@@ -61,13 +39,38 @@ impl Validator {
 
     fn validate_expression(&mut self, expr: &Expression) {
         match expr {
-            Expression::Assign(_, _, expr, _) => self.validate_expression(expr),
-            Expression::BinaryOp(_, e1, e2) => {
+            Expression::Assign(_, lhs, rhs, ctx) => {
+                self.validate_expression(lhs);
+                if !is_lvalue_expression(lhs, &self.symtab) {
+                    self.new_error("Left hand side of assignment must be lvalue".to_string(), ctx);
+                }
+
+                match expression_type(rhs, &self.symtab) {
+                    Ok(rhs_typ) => match expression_type(lhs, &self.symtab) {
+                        Ok(lhs_typ) => {
+                            if lhs_typ != rhs_typ {
+                                self.new_error(
+                                    format!(
+                                        "Invalid assignment. Type of lhs ({}) and rhs ({}) are different",
+                                        lhs_typ, rhs_typ
+                                    ),
+                                    ctx,
+                                );
+                            }
+                        }
+                        Err(e) => self.errors.push(ValidationError::from_type_error(&e)),
+                    },
+                    Err(e) => self.errors.push(ValidationError::from_type_error(&e)),
+                }
+
+                self.validate_expression(rhs)
+            }
+            Expression::BinaryOp(_, e1, e2, _) => {
                 self.validate_expression(e1);
                 self.validate_expression(e2);
             }
-            Expression::UnaryOp(_, expr) => self.validate_expression(expr),
-            Expression::Conditional(e1, e2, e3) => {
+            Expression::UnaryOp(_, expr, _) => self.validate_expression(expr),
+            Expression::Conditional(e1, e2, e3, _) => {
                 self.validate_expression(e1);
                 self.validate_expression(e2);
                 self.validate_expression(e3);
@@ -77,17 +80,47 @@ impl Validator {
                     self.validate_expression(arg);
                 }
 
-                if !self.function_map.contains_key(name) {
-                    self.new_error(format!("Missing declaration of function '{}'", name), ctx);
-                } else {
-                    match &self.function_map[name].params {
+                if let Some(func) = self.symtab.get_function(name) {
+                    match &func.params {
                         None => {}
                         Some(params) => {
-                            if params.len() != args.len() {
-                                self.new_error(format!("Too many arguments to function '{}'", name), ctx);
+                            // check for mismatch in number of arguments
+                            match params.len().cmp(&args.len()) {
+                                Ordering::Less => {
+                                    self.new_error(format!("Too many arguments to function '{}'", name), ctx);
+                                }
+                                Ordering::Greater => {
+                                    self.new_error(format!("Too few arguments to function '{}'", name), ctx);
+                                }
+                                _ => {}
+                            }
+
+                            // check for mismatch in type of arguments
+                            for (arg, param) in args.iter().zip(params.iter()) {
+                                match expression_type(arg, &self.symtab) {
+                                    Ok(argtyp) => {
+                                        if argtyp != param.typ {
+                                            let paramid = if let Some(id) = &param.id {
+                                                id.to_string()
+                                            } else {
+                                                "<unnamed>".to_string()
+                                            };
+                                            self.new_error(
+                                                format!(
+                                                    "Expected type '{}' for parameter '{}', type '{}' passed",
+                                                    param.typ, paramid, argtyp
+                                                ),
+                                                &param.ctx,
+                                            );
+                                        }
+                                    }
+                                    Err(e) => self.errors.push(ValidationError::from_type_error(&e)),
+                                }
                             }
                         }
                     }
+                } else {
+                    self.new_error(format!("Missing declaration of function '{}'", name), ctx);
                 }
             }
             _ => {}
@@ -97,16 +130,15 @@ impl Validator {
     fn validate_statement(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Return(maybe_expr, ctx) => {
-
                 match self.current_rettype.as_ref().unwrap() {
-                    Type::Void => {
+                    Type::Basic(BasicType::Void) => {
                         if maybe_expr.is_some() {
-                            self.new_error(format!("Return with value in void function"), ctx);
+                            self.new_error("Return with value in void function".to_string(), ctx);
                         }
                     }
                     _ => {
                         if maybe_expr.is_none() {
-                            self.new_error(format!("Return without value in non-void function"), ctx);
+                            self.new_error("Return without value in non-void function".to_string(), ctx);
                         }
                     }
                 }
@@ -124,7 +156,11 @@ impl Validator {
                     self.validate_statement(eb);
                 }
             }
-            Statement::Compound(bkitems) => self.validate_block_items(bkitems),
+            Statement::Compound(bkitems) => {
+                self.symtab.new_scope();
+                self.validate_block_items(bkitems);
+                self.symtab.end_scope();
+            }
             Statement::For(initexpr, cond, postexpr, body) => {
                 if let Some(ie) = initexpr {
                     self.validate_expression(ie);
@@ -136,12 +172,14 @@ impl Validator {
                 self.validate_statement(body);
             }
             Statement::ForDecl(decl, cond, postexpr, body) => {
+                self.symtab.new_scope();
                 self.validate_declaration(decl);
                 self.validate_expression(cond);
                 if let Some(pe) = postexpr {
                     self.validate_expression(pe);
                 }
                 self.validate_statement(body);
+                self.symtab.end_scope();
             }
             Statement::While(cond, body) => {
                 self.validate_expression(cond);
@@ -156,12 +194,39 @@ impl Validator {
     }
 
     fn validate_declaration(&mut self, decl: &Declaration) {
-        if let Type::Void = decl.typ {
-            self.new_error(format!("Variable '{}' declared as void", decl.id), &decl.ctx);
+        if match &decl.typ {
+            Type::Basic(BasicType::Void) => true,
+            Type::Basic(BasicType::Int) => false,
+            Type::Ptr(tt) => match **tt {
+                Type::Basic(BasicType::Int) => false,
+                _ => true,
+            },
+        } {
+            self.new_error(
+                format!("Bad declaration for {}. Variables can only have type 'int' or 'int*'", decl.id),
+                &decl.ctx,
+            );
         }
 
-        if let Some(expr) = &decl.init {
-            self.validate_expression(&expr);
+        self.symtab.insert_local(&decl.id, LocalVariableSymbol::new(&decl.typ));
+
+        if let Some(init_expr) = &decl.init {
+            match expression_type(init_expr, &self.symtab) {
+                Ok(init_typ) => {
+                    if decl.typ != init_typ {
+                        self.new_error(
+                            format!(
+                                "Invalid declaration. Type of lhs ({}) and rhs ({}) are different",
+                                decl.typ, init_typ
+                            ),
+                            &decl.ctx,
+                        );
+                    }
+                }
+                Err(e) => self.errors.push(ValidationError::from_type_error(&e)),
+            }
+
+            self.validate_expression(&init_expr);
         }
     }
 
@@ -178,19 +243,34 @@ impl Validator {
         }
     }
 
-    fn validate_function_declaration(&mut self, id: &str, func: &Func) {
-        if self.globals_map.contains_key(id) {
+    fn validate_function_declaration(&mut self, id: &str, func: &FunctionSymbol) {
+        if self.symtab.get_global(id).is_some() {
             self.new_error(format!("Global variable redeclared as function '{}'", id), &func.ctx);
         }
 
-        // Check for repeated parameter names
         if let Some(params) = &func.params {
+            // Check for multiple void or named void parameter
+            let mut voidcount = 0;
+            for p in params {
+                if let Type::Basic(BasicType::Void) = p.typ {
+                    voidcount += 1;
+                    if voidcount > 1 {
+                        self.new_error("Only a single void parameter is allowed".to_string(), &p.ctx);
+                    }
+
+                    if let Some(id) = &p.id {
+                        self.new_error(format!("Parameter {} has incomplete type 'void'", id), &p.ctx);
+                    }
+                }
+            }
+
+            // Check for repeated parameter names
             for i1 in 1..params.len() {
                 if let Some(id1) = &params[i1].id {
                     for p2 in params.iter().take(i1) {
                         if let Some(id2) = &p2.id {
                             if id1 == id2 {
-                                self.new_error(format!("Redefinition of parameter {}", id1), &func.ctx);
+                                self.new_error(format!("Redefinition of parameter {}", id1), &p2.ctx);
                             }
                         }
                     }
@@ -198,9 +278,7 @@ impl Validator {
             }
         }
 
-        if self.function_map.contains_key(id) {
-            let old_func = self.function_map[id].clone();
-
+        if let Some(old_func) = self.symtab.get_function(id) {
             // check for different return types
             if old_func.ret != func.ret {
                 let msg = format!(
@@ -210,17 +288,22 @@ impl Validator {
                 self.new_error(msg, &func.ctx);
             }
 
-            // check for different number of parameters
+            // check for different number or type of parameters
             if let Some(old_params) = &old_func.params {
                 if let Some(params) = &func.params {
                     if params.len() != old_params.len() {
                         let msg = format!(
-                            "Multiple conflicting declarations for {}, with parameters ({}) and ({})",
-                            id,
-                            params_to_string(&old_params),
-                            params_to_string(&params)
+                            "Declaration for {} conflicts with previous declaration; different number of parameters",
+                            id
                         );
                         self.new_error(msg, &func.ctx);
+                    } else {
+                        for (pold, pnew) in old_params.iter().zip(params.iter()) {
+                            if pold.typ != pnew.typ {
+                                let msg = format!("Declaration for {} conflicts with previous declaration; mismatching parameter type", id);
+                                self.new_error(msg, &pnew.ctx);
+                            }
+                        }
                     }
                 }
             }
@@ -230,22 +313,23 @@ impl Validator {
     fn validate_function(&mut self, func: &Function) {
         match func {
             Function::Declaration(rettyp, id, parameters, ctx) => {
-                let new_fdecl = Func::new(rettyp, parameters, false, ctx);
+                let new_fdecl = FunctionSymbol::new(rettyp, parameters, false, ctx);
 
                 self.validate_function_declaration(id, &new_fdecl);
 
-                if self.function_map.contains_key(id) && !self.function_map[id].has_definition {
-                    // update parameters if not defined
-                    if let FunctionParameters::Unspecified = parameters {
-                    } else {
-                        self.function_map.insert(id.to_string(), new_fdecl);
+                if let Some(func) = self.symtab.get_function(id) {
+                    if !func.has_definition && !matches!(parameters, FunctionParameters::Unspecified) {
+                        // update parameters if not defined
+                        self.symtab.insert_function(id, new_fdecl);
                     }
                 } else {
-                    self.function_map.insert(id.to_string(), new_fdecl);
+                    self.symtab.insert_function(id, new_fdecl);
                 }
             }
             Function::Definition(rettyp, id, parameters, body, ctx) => {
-                if let FunctionParameters::List(params) = parameters {
+                let new_fdecl = FunctionSymbol::new(rettyp, parameters, true, ctx);
+
+                if let Some(params) = &new_fdecl.params {
                     for param in params {
                         if param.id.is_none() {
                             self.new_error(format!("Missing parameter name of function '{}'", id), &param.ctx);
@@ -253,20 +337,27 @@ impl Validator {
                     }
                 }
 
-                let new_fdecl = Func::new(rettyp, parameters, true, ctx);
                 self.validate_function_declaration(id, &new_fdecl);
 
-                if self.function_map.contains_key(id) {
-                    let f = &self.function_map[id];
+                self.symtab.new_scope();
 
+                if let Some(params) = &new_fdecl.params {
+                    for param in params {
+                        if let Some(id) = &param.id {
+                            self.symtab.insert_local(id, LocalVariableSymbol::new(&param.typ));
+                        }
+                    }
+                }
+
+                if let Some(f) = self.symtab.get_function(id) {
                     // check if already defined
                     if f.has_definition {
                         self.new_error(format!("Redefinition of '{}'", id), ctx);
                     } else {
-                        self.function_map.insert(id.to_string(), new_fdecl);
+                        self.symtab.insert_function(id, new_fdecl);
                     }
                 } else {
-                    self.function_map.insert(id.to_string(), new_fdecl);
+                    self.symtab.insert_function(id, new_fdecl);
                 }
 
                 self.current_rettype = Some(rettyp.clone());
@@ -274,29 +365,47 @@ impl Validator {
                 self.validate_block_items(body);
 
                 self.current_rettype = None;
+                self.symtab.end_scope();
             }
         }
     }
 
     fn validate_global_declaration(&mut self, decl: &Declaration) {
-        let Declaration { id, init, ctx, .. } = decl;
+        let Declaration { id, init, ctx, typ } = decl;
 
-        if self.function_map.contains_key(id) {
+        if self.symtab.get_function(id).is_some() {
             self.new_error(format!("Function redeclared as global variable '{}'", id), ctx);
         }
 
         if let Some(expr) = init {
-            if let Expression::Constant(_) = expr {
-                if self.globals_map.contains_key(id) && self.globals_map[id] {
+            match expression_type(expr, &self.symtab) {
+                Ok(init_typ) => {
+                    if typ != &init_typ {
+                        self.new_error(
+                            format!(
+                                "Invalid global declaration. Type of lhs ({}) and rhs ({}) are different",
+                                typ, init_typ
+                            ),
+                            &decl.ctx,
+                        );
+                    }
+                }
+                Err(e) => self.errors.push(ValidationError::from_type_error(&e)),
+            }
+
+            if !is_constant_expression(expr, &self.symtab) {
+                self.new_error(format!("Non-constant initializer element for global '{}'", id), ctx);
+            }
+
+            if let Some(glob) = self.symtab.get_global(id) {
+                if glob.has_definition {
                     self.new_error(format!("Redefinition of global variable '{}'", id), ctx);
-                } else {
-                    self.globals_map.insert(id.to_string(), true);
                 }
             } else {
-                self.new_error(format!("Non-constant initializer for global '{}'", id), ctx);
+                self.symtab.insert_global(id, GlobalVariableSymbol::new(typ, true, &ctx));
             }
-        } else if !self.globals_map.contains_key(id) {
-            self.globals_map.insert(id.to_string(), false);
+        } else if !self.symtab.contains(id) {
+            self.symtab.insert_global(id, GlobalVariableSymbol::new(typ, false, &ctx));
         }
     }
 
