@@ -1,10 +1,12 @@
-use std::collections::{HashMap, HashSet};
 use std::error;
 use std::fmt;
 
 use crate::ast::AstContext;
-use crate::ast::{AssignmentKind, BinaryOp, FixOp, Type, UnaryOp};
+use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
+use crate::ast::{BasicType, Type};
 use crate::ast::{BlockItem, Declaration, Expression, Function, FunctionParameters, Program, Statement, ToplevelItem};
+use crate::evaluation::{evaluate_const_address_expression, evaluate_const_int_expression, expression_type};
+use crate::symbol_table::{GlobalVariableSymbol, LocalVariableSymbol, SymbolTable};
 
 //===================================================================
 // Code generation
@@ -88,80 +90,6 @@ impl Code {
     }
 }
 
-#[derive(Debug, Clone)]
-struct VarMap {
-    addr_map: HashMap<String, i32>,
-    globals: HashMap<String, bool>,
-    regsize: u8,
-    stack_index: i32,
-    block_decl_set: HashSet<String>,
-    bp: String,
-}
-
-impl VarMap {
-    fn new(regsize: u8, bp: &str) -> VarMap {
-        VarMap {
-            addr_map: HashMap::new(),
-            globals: HashMap::new(),
-            regsize,
-            stack_index: -(regsize as i32),
-            block_decl_set: HashSet::new(),
-            bp: bp.to_string(),
-        }
-    }
-
-    fn block_decl(&self, name: &str) -> bool {
-        self.block_decl_set.contains(name)
-    }
-
-    fn insert_local(&mut self, name: &str) {
-        self.addr_map.insert(name.to_string(), self.stack_index);
-        self.stack_index -= self.regsize as i32;
-        self.block_decl_set.insert(name.to_string());
-    }
-
-    fn insert_arg(&mut self, name: &str, idx: i32) {
-        self.addr_map.insert(name.to_string(), idx);
-        self.block_decl_set.insert(name.to_string());
-    }
-
-    fn insert_global(&mut self, name: &str) {
-        if !self.globals.contains_key(name) {
-            self.globals.insert(name.to_string(), false);
-        }
-    }
-
-    fn set_global_defined(&mut self, name: &str) {
-        if self.globals.contains_key(name) {
-            *self.globals.get_mut(name).unwrap() = true;
-        }
-    }
-
-    fn has(&self, name: &str) -> bool {
-        self.addr_map.contains_key(name) || self.globals.contains_key(name)
-    }
-
-    fn get_address(&self, name: &str) -> String {
-        if self.addr_map.contains_key(name) {
-            format!("{}({})", self.addr_map[name], self.bp)
-        } else if self.globals.contains_key(name) {
-            name.to_string()
-        } else {
-            panic!("Internal error. No such variable");
-        }
-    }
-
-    fn get_undefined_globals(&self) -> Vec<String> {
-        let mut v = Vec::new();
-        for (id, def) in &self.globals {
-            if !def {
-                v.push(id.to_string());
-            }
-        }
-        v
-    }
-}
-
 struct LoopContext {
     break_lbl: Option<String>,
     continue_lbl: Option<String>,
@@ -218,28 +146,69 @@ impl Registers {
     }
 }
 
+pub struct Stack {
+    entry_size: usize,
+    index: i32,
+    saved_indices: Vec<i32>,
+}
+
+impl Stack {
+    fn new(_32bit: bool) -> Stack {
+        let entry_size = if _32bit { 4 } else { 8 };
+        Stack { entry_size, index: -(entry_size as i32), saved_indices: Vec::new() }
+    }
+
+    fn new_scope(&mut self) {
+        self.saved_indices.push(self.index);
+    }
+
+    fn end_scope(&mut self) -> usize {
+        let saved_index = self.saved_indices.pop().unwrap();
+
+        let scope_size = saved_index - self.index;
+        self.index = saved_index;
+        scope_size as usize
+    }
+}
+
 pub struct Generator {
     code: Code,
     emit_32bit: bool,
     label_counter: i32,
     reg: Registers,
-    var_map: VarMap,
+    stack: Stack,
+    symtab: SymbolTable,
     loop_ctx: LoopContext,
     alignment: u8,
 }
 
 impl Generator {
     fn new(emit_32bit: bool) -> Generator {
-        let bytes_per_reg = if emit_32bit { 4 } else { 8 };
-        let reg = Registers::new(emit_32bit);
         Generator {
             code: Code::new(),
             emit_32bit,
             label_counter: 0,
-            var_map: VarMap::new(bytes_per_reg, &reg.bp.n),
-            reg,
+            symtab: SymbolTable::new(),
+            stack: Stack::new(emit_32bit),
+            reg: Registers::new(emit_32bit),
             loop_ctx: LoopContext { break_lbl: None, continue_lbl: None },
             alignment: 4,
+        }
+    }
+
+    fn size_of_type(&self, t: &Type) -> usize {
+        match t {
+            Type::Ptr(_) => {
+                if self.emit_32bit {
+                    4
+                } else {
+                    8
+                }
+            }
+            Type::Basic(bt) => match bt {
+                BasicType::Int => 4,
+                BasicType::Void => 0,
+            },
         }
     }
 
@@ -253,19 +222,37 @@ impl Generator {
         lbl
     }
 
-    fn new_scope(&mut self) -> VarMap {
-        let old_var_map = self.var_map.clone();
-        self.var_map.block_decl_set = HashSet::new();
-        old_var_map
+    fn get_variable_address(&self, name: &str) -> Option<String> {
+        if let Some(loc) = self.symtab.get_local(name) {
+            if let Some(offset) = loc.stack_offset {
+                Some(format!("{}({})", offset, self.reg.bp.n))
+            } else {
+                panic!("Internal error. No stack offset for variable {}", name);
+            }
+        } else if self.symtab.get_global(name).is_some() {
+            Some(name.to_string())
+        } else {
+            None
+        }
     }
 
-    fn restore_scope(&mut self, old_var_map: VarMap) {
-        // restore var_map, and stack pointer
-        let diff_stack_index = old_var_map.stack_index - self.var_map.stack_index;
-        self.var_map = old_var_map;
-        if diff_stack_index > 0 {
-            self.emit(CodeLine::i3("add", &format!("${}", diff_stack_index), &self.reg.sp.n));
+    fn new_scope(&mut self) {
+        self.stack.new_scope();
+        self.symtab.new_scope();
+    }
+
+    fn end_scope(&mut self) {
+        let scope_size = self.stack.end_scope();
+        if scope_size > 0 {
+            // restore stack pointer
+            self.emit(CodeLine::i3("add", &format!("${}", scope_size), &self.reg.sp.n));
         }
+        self.symtab.end_scope();
+    }
+
+    fn insert_local_variable(&mut self, id: &str, typ: &Type) {
+        self.symtab.insert_local(&id, LocalVariableSymbol::new_with_stack_offset(typ, self.stack.index)); // save new variable
+        self.stack.index -= self.stack.entry_size as i32;
     }
 
     fn new_loop_context(&mut self, brk_lbl: &str, cnt_lbl: &str) -> LoopContext {
@@ -368,6 +355,31 @@ impl Generator {
         }
     }
 
+    fn get_lvalue_address(&mut self, expr: &Expression) -> Result<String, CodegenError> {
+        match expr {
+            Expression::Variable(id, ctx) => {
+                if let Some(addr) = self.get_variable_address(&id) {
+                    Ok(addr)
+                } else {
+                    Err(CodegenError::new(format!("Missing declaration for variable '{}'", id), &ctx))
+                }
+            }
+            Expression::UnaryOp(uop, expr, _) => {
+                match uop {
+                    UnaryOp::Indirection => {
+                        // this has to be a pointer
+                        self.generate_expression_code(expr)?;
+                        Ok(format!("({})", &self.reg.ax.n))
+                    }
+                    _ => {
+                        panic!("Internal error. Indirection ('*') is the sole unary operator producing a valid lvalue")
+                    }
+                }
+            }
+            _ => panic!("Internal error. Expression is not a valid lvalue"),
+        }
+    }
+
     fn generate_expression_code(&mut self, expr: &Expression) -> Result<(), CodegenError> {
         match expr {
             Expression::Constant(val) => {
@@ -375,29 +387,40 @@ impl Generator {
                 self.emit(CodeLine::i3("mov", &literal, &self.reg.ax.n32));
             }
             Expression::Variable(id, ctx) => {
-                if !self.var_map.has(id) {
+                if let Some(addr) = self.get_variable_address(id) {
+                    self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
+                } else {
                     return Err(CodegenError::new(format!("Missing declaration for variable '{}'", id), &ctx));
                 }
-                let addr = self.var_map.get_address(&id);
-                self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
             }
-            Expression::UnaryOp(uop, expr) => {
-                self.generate_expression_code(expr)?;
+            Expression::UnaryOp(uop, expr, _) => {
                 match uop {
                     UnaryOp::Negate => {
+                        self.generate_expression_code(expr)?;
                         self.emit(CodeLine::i2("neg", &self.reg.ax.n32));
                     }
                     UnaryOp::Not => {
+                        self.generate_expression_code(expr)?;
                         self.emit(CodeLine::i3("cmp", "$0", &self.reg.ax.n32));
                         self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32));
                         self.emit(CodeLine::i2("sete", "%al"));
                     }
                     UnaryOp::Complement => {
+                        self.generate_expression_code(expr)?;
                         self.emit(CodeLine::i2("not", &self.reg.ax.n32));
+                    }
+                    UnaryOp::Indirection => {
+                        // this has to be a pointer
+                        self.generate_expression_code(expr)?;
+                        self.emit(CodeLine::i3("mov", &format!("({})", &self.reg.ax.n), &self.reg.ax.n32))
+                    }
+                    UnaryOp::AddressOf => {
+                        let addr = self.get_lvalue_address(expr)?;
+                        self.emit(CodeLine::i3("lea", &addr, &self.reg.ax.n));
                     }
                 }
             }
-            Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2) => {
+            Expression::BinaryOp(BinaryOp::LogicalOr, e1, e2, _) => {
                 // setup labels
                 let cond2 = self.new_label();
                 let end = self.new_label();
@@ -416,7 +439,7 @@ impl Generator {
                 self.emit(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
                 self.emit(CodeLine::lbl(&end));
             }
-            Expression::BinaryOp(BinaryOp::LogicalAnd, e1, e2) => {
+            Expression::BinaryOp(BinaryOp::LogicalAnd, e1, e2, _) => {
                 // setup labels
                 let cond2 = self.new_label();
                 let end = self.new_label();
@@ -434,7 +457,7 @@ impl Generator {
                 self.emit(CodeLine::i2("setnz", "%al")); //                          set bit to 1 if eax was not zero
                 self.emit(CodeLine::lbl(&end));
             }
-            Expression::BinaryOp(bop, e1, e2) => {
+            Expression::BinaryOp(bop, e1, e2, _) => {
                 self.generate_expression_code(e1)?;
 
                 self.emit(CodeLine::i2("push", &self.reg.ax.n));
@@ -444,12 +467,9 @@ impl Generator {
                 self.emit(CodeLine::i2("pop", &self.reg.ax.n)); //                     get arg1 from stack into %eax
                 self.generate_binop_code(bop);
             }
-            Expression::PrefixOp(fixop, id, ctx) => {
-                if !self.var_map.has(&id) {
-                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
-                }
+            Expression::PrefixOp(fixop, operand, _) => {
+                let addr = self.get_lvalue_address(operand)?;
 
-                let addr = self.var_map.get_address(&id);
                 if let FixOp::Inc = fixop {
                     self.emit(CodeLine::i2("incl", &addr));
                 } else {
@@ -457,27 +477,26 @@ impl Generator {
                 }
                 self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
             }
-            Expression::PostfixOp(fixop, id, ctx) => {
-                if !self.var_map.has(&id) {
-                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
-                }
+            Expression::PostfixOp(fixop, operand, _) => {
+                let addr = self.get_lvalue_address(operand)?;
 
-                let addr = self.var_map.get_address(&id);
-                self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n));
+                self.emit(CodeLine::i3("lea", &addr, &self.reg.cx.n));
+
+                self.emit(CodeLine::i3("mov", &format!("({})", &self.reg.cx.n), &self.reg.ax.n));
                 if let FixOp::Inc = fixop {
-                    self.emit(CodeLine::i2("incl", &addr));
+                    self.emit(CodeLine::i2("incl", &format!("({})", &self.reg.cx.n)));
                 } else {
-                    self.emit(CodeLine::i2("decl", &addr));
+                    self.emit(CodeLine::i2("decl", &format!("({})", &self.reg.cx.n)));
                 }
             }
-            Expression::Assign(kind, id, expr, ctx) => {
-                if !self.var_map.has(id) {
-                    return Err(CodegenError::new(format!("Tried referencing undeclared variable {}.", id), &ctx));
-                }
+            Expression::Assign(kind, lhs, expr, _) => {
+                let lhs_type = expression_type(lhs, &self.symtab).unwrap();
+
+                let addr = self.get_lvalue_address(lhs)?;
+                self.emit(CodeLine::i3("lea", &addr, &self.reg.ax.n));
+                self.emit(CodeLine::i2("push", &self.reg.ax.n));
 
                 self.generate_expression_code(expr)?;
-
-                let addr = self.var_map.get_address(id);
 
                 let binop = match kind {
                     AssignmentKind::Write => None,
@@ -495,13 +514,26 @@ impl Generator {
 
                 if let Some(bop) = binop {
                     self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.cx.n32));
-                    self.emit(CodeLine::i3("mov", &addr, &self.reg.ax.n32));
+                    // load address of lhs
+                    let addr_expr = format!("({})", &self.reg.sp.n);
+                    self.emit(CodeLine::i3("mov", &addr_expr, &self.reg.ax.n));
+                    // load value of lhs
+                    self.emit(CodeLine::i3("mov", &format!("({})", &self.reg.ax.n), &self.reg.ax.n32));
                     self.generate_binop_code(&bop);
                 }
 
-                self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &addr));
+                // get the address
+                self.emit(CodeLine::i2("pop", &self.reg.cx.n));
+                match lhs_type {
+                    Type::Basic(_) => {
+                        self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &format!("({})", self.reg.cx.n)));
+                    }
+                    Type::Ptr(_) => {
+                        self.emit(CodeLine::i3("mov", &self.reg.ax.n, &format!("({})", self.reg.cx.n)));
+                    }
+                }
             }
-            Expression::Conditional(condexpr, ifexpr, elseexpr) => {
+            Expression::Conditional(condexpr, ifexpr, elseexpr, _) => {
                 // setup labels
                 let else_case = self.new_label();
                 let end = self.new_label();
@@ -524,17 +556,27 @@ impl Generator {
                 // evaluate arguments and push on stack (or put in registers) in reverse order
                 for (iarg, arg) in args.iter().enumerate().rev() {
                     self.generate_expression_code(arg)?;
+
                     if iarg >= narg_regs {
                         self.emit(CodeLine::i2("push", &self.reg.ax.n));
                     } else {
-                        self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.args[iarg].n32));
+                        let argtyp = expression_type(arg, &self.symtab).unwrap();
+
+                        match argtyp {
+                            Type::Basic(_) => {
+                                self.emit(CodeLine::i3("mov", &self.reg.ax.n32, &self.reg.args[iarg].n32));
+                            }
+                            Type::Ptr(_) => {
+                                self.emit(CodeLine::i3("mov", &self.reg.ax.n, &self.reg.args[iarg].n));
+                            }
+                        }
                     }
                 }
 
                 self.emit(CodeLine::i2("call", &id));
                 if args.len() > narg_regs {
                     let n_stack_args = args.len() - narg_regs;
-                    let offset_literal = format!("${}", (self.var_map.regsize as usize) * n_stack_args);
+                    let offset_literal = format!("${}", self.stack.entry_size * n_stack_args);
                     self.emit(CodeLine::i3("add", &offset_literal, &self.reg.sp.n));
                 }
             }
@@ -543,17 +585,17 @@ impl Generator {
     }
 
     fn generate_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
-        let Declaration { id, init, ctx, .. } = decl;
-        if self.var_map.block_decl(&id) {
+        let Declaration { id, init, ctx, typ } = decl;
+        if self.symtab.declared_in_scope(&id) {
             return Err(CodegenError::new(format!("Variable {} already declared in block", id), &ctx));
         }
         if let Some(expr) = init {
-            self.generate_expression_code(&expr)?; //                  possibly compute initial value, saved in %rax
+            self.generate_expression_code(&expr)?; //                   possibly compute initial value, saved in %rax
         } else {
-            self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n)); //   otherwise initialize %rax with 0
+            self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n)); //    otherwise initialize %rax with 0
         }
-        self.emit(CodeLine::i2("push", &self.reg.ax.n)); //            push value on stack at known index
-        self.var_map.insert_local(&id); //                        save new variable
+        self.emit(CodeLine::i2("push", &self.reg.ax.n)); //             push value on stack at known index
+        self.insert_local_variable(&id, typ);
         Ok(())
     }
 
@@ -699,7 +741,7 @@ impl Generator {
                 let cnt = self.new_label();
                 let old_loop_ctx = self.new_loop_context(&end, &cnt);
 
-                let old_scope = self.new_scope();
+                self.new_scope();
 
                 self.generate_declaration_code(&initdecl)?;
 
@@ -721,17 +763,17 @@ impl Generator {
                 self.emit(CodeLine::lbl(&end));
 
                 // restore old scope
-                self.restore_scope(old_scope);
+                self.end_scope();
 
                 self.restore_loop_context(old_loop_ctx);
             }
             Statement::Compound(bkitems) => {
-                let old_scope = self.new_scope();
+                self.new_scope();
 
                 self.generate_block_items(bkitems)?;
 
                 // restore old scope
-                self.restore_scope(old_scope);
+                self.end_scope();
             }
         }
         Ok(())
@@ -761,7 +803,7 @@ impl Generator {
                 self.emit(CodeLine::i2("push", &self.reg.bp.n));
                 self.emit(CodeLine::i3("mov", &self.reg.sp.n, &self.reg.bp.n));
 
-                let old_scope = self.new_scope();
+                self.new_scope();
 
                 //add parameters to variable map
                 let narg_regs = self.reg.args.len();
@@ -773,11 +815,14 @@ impl Generator {
                         if i < narg_regs {
                             // push value on stack at known index
                             self.emit(CodeLine::i2("push", &self.reg.args[i].n));
-                            self.var_map.insert_local(&id); // save new variable
+                            self.insert_local_variable(&id, &p.typ);
                         } else {
                             // `regsize` extra for the stack pointer which will be pushed
-                            let stack_offset = (self.var_map.regsize as usize) * (1 + 1 + i - narg_regs);
-                            self.var_map.insert_arg(&id, stack_offset as i32);
+                            let stack_offset = self.stack.entry_size * (1 + 1 + i - narg_regs);
+                            self.symtab.insert_local(
+                                &id,
+                                LocalVariableSymbol::new_with_stack_offset(&p.typ, stack_offset as i32),
+                            );
                         }
                     }
                 }
@@ -785,12 +830,12 @@ impl Generator {
                 self.generate_block_items(&body)?;
 
                 // restore old scope
-                self.restore_scope(old_scope);
+                self.end_scope();
 
                 if !self.code.code.iter().any(|cl| if let CodeLine::Instr1(op) = cl { op == "ret" } else { false }) {
                     match rettyp {
-                        Type::Void => self.generate_return_statement_code(&None)?,
-                        Type::Int => self.generate_return_statement_code(&Some(Expression::Constant(0)))?,
+                        Type::Basic(BasicType::Void) => self.generate_return_statement_code(&None)?,
+                        _ => self.generate_return_statement_code(&Some(Expression::Constant(0)))?,
                     };
                 }
             }
@@ -799,27 +844,37 @@ impl Generator {
     }
 
     fn generate_global_declaration_code(&mut self, decl: &Declaration) -> Result<(), CodegenError> {
-        let Declaration { id, init, .. } = decl;
+        let Declaration { id, init, typ, ctx } = decl;
 
-        self.var_map.insert_global(&id);
+        let mut has_def = false;
 
         if let Some(expr) = init {
-            // unpack constant. we have verified that it is a constant during validation.
-            if let Expression::Constant(v) = expr {
-                self.emit(CodeLine::i2(".globl", &id));
-                self.emit(CodeLine::i1(".data"));
-                self.emit(CodeLine::i2(".align", &format!("{}", self.alignment)));
-                self.emit(CodeLine::lbl(&id));
-                self.emit(CodeLine::i2(".long", &format!("{}", v)));
+            has_def = true;
 
-                // switch back to emitting code
-                self.emit(CodeLine::i1(".text"));
+            self.emit(CodeLine::i2(".globl", &id));
+            self.emit(CodeLine::i1(".data"));
+            self.emit(CodeLine::i2(".align", &format!("{}", self.alignment)));
+            self.emit(CodeLine::lbl(&id));
 
-                self.var_map.set_global_defined(id);
-            } else {
-                panic!("Internal error, non-constant initializer for global variable should have been caught during validation.");
-            }
+            let type_size = self.size_of_type(typ);
+            let cmd_str = match type_size {
+                8 => ".quad",
+                4 => ".long",
+                _ => panic!("No data command for size {}", type_size),
+            };
+
+            let val_str = match typ {
+                Type::Basic(_) => format!("{}", evaluate_const_int_expression(expr)),
+                Type::Ptr(_) => evaluate_const_address_expression(expr),
+            };
+
+            self.emit(CodeLine::i2(cmd_str, &val_str));
         }
+
+        // switch back to emitting code
+        self.emit(CodeLine::i1(".text"));
+
+        self.symtab.insert_global(&id, GlobalVariableSymbol::new(&typ, has_def, &ctx));
         Ok(())
     }
 
@@ -833,12 +888,15 @@ impl Generator {
         }
 
         // generate code for uninitialized variables
-        for gid in self.var_map.get_undefined_globals() {
-            self.emit(CodeLine::i2(".globl", &gid));
-            self.emit(CodeLine::i1(".bss"));
-            self.emit(CodeLine::i2(".align", &format!("{}", self.alignment)));
-            self.emit(CodeLine::lbl(&gid));
-            self.emit(CodeLine::i2(".zero", "4")); // size of int
+        for (gid, gv) in self.symtab.get_globals() {
+            if !gv.has_definition {
+                self.emit(CodeLine::i2(".globl", &gid));
+                self.emit(CodeLine::i1(".bss"));
+                self.emit(CodeLine::i2(".align", &format!("{}", self.alignment)));
+                self.emit(CodeLine::lbl(&gid));
+                let size = self.size_of_type(&gv.typ);
+                self.emit(CodeLine::i2(".zero", &format!("{}", size)));
+            }
         }
 
         Ok(())
