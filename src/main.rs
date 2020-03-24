@@ -14,6 +14,8 @@ use parser::parse;
 
 mod symbol_table;
 
+mod evaluation;
+
 mod validation;
 use validation::validate;
 
