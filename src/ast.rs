@@ -27,6 +27,8 @@ pub enum UnaryOp {
     Negate,
     Not,
     Complement,
+    Indirection,
+    AddressOf,
 }
 
 #[derive(Debug)]
@@ -51,9 +53,15 @@ pub enum FixOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Type {
+pub enum BasicType {
     Int,
     Void,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Basic(BasicType),
+    Ptr(Box<Type>),
 }
 
 #[derive(Clone)]
@@ -63,14 +71,14 @@ pub struct AstContext {
 }
 
 pub enum Expression {
-    Assign(AssignmentKind, String, Box<Expression>, AstContext),
-    BinaryOp(BinaryOp, Box<Expression>, Box<Expression>),
-    UnaryOp(UnaryOp, Box<Expression>),
-    PrefixOp(FixOp, String, AstContext),
-    PostfixOp(FixOp, String, AstContext),
+    Assign(AssignmentKind, Box<Expression>, Box<Expression>, AstContext),
+    BinaryOp(BinaryOp, Box<Expression>, Box<Expression>, AstContext),
+    UnaryOp(UnaryOp, Box<Expression>, AstContext),
+    PrefixOp(FixOp, Box<Expression>, AstContext),
+    PostfixOp(FixOp, Box<Expression>, AstContext),
     Constant(i64),
     Variable(String, AstContext),
-    Conditional(Box<Expression>, Box<Expression>, Box<Expression>),
+    Conditional(Box<Expression>, Box<Expression>, Box<Expression>, AstContext),
     FunctionCall(String, Vec<Expression>, AstContext),
 }
 
@@ -128,29 +136,34 @@ pub enum Program {
     Prog(Vec<ToplevelItem>),
 }
 
-fn print_expression(expr: &Expression, lvl: i32) {
+pub fn print_expression(expr: &Expression, lvl: i32) {
     match expr {
-        Expression::Assign(kind, var, exp, _) => {
-            println!("{:<1$}Assign {2:?} {3:?} {{", "", (lvl * 2) as usize, var, kind);
-            print_expression(exp, lvl + 1);
+        Expression::Assign(kind, lhs, rhs, _) => {
+            println!("{:<1$}Assign {2:?} {{", "", (lvl * 2) as usize, kind);
+            print_expression(lhs, lvl + 1);
+            print_expression(rhs, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
-        Expression::BinaryOp(binop, exp1, exp2) => {
+        Expression::BinaryOp(binop, exp1, exp2, _) => {
             println!("{:<1$}BinaryOp {2:?} {{", "", (lvl * 2) as usize, binop);
             print_expression(exp1, lvl + 1);
             print_expression(exp2, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
-        Expression::UnaryOp(unop, exp) => {
+        Expression::UnaryOp(unop, exp, _) => {
             println!("{:<1$}UnaryOp {2:?} {{", "", (lvl * 2) as usize, unop);
             print_expression(exp, lvl + 1);
             println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
-        Expression::PrefixOp(fop, id, _) => {
-            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, fop, id);
+        Expression::PrefixOp(fop, operand, _) => {
+            println!("{:<1$}PrefixOp {2:?} {{", "", (lvl * 2) as usize, fop);
+            print_expression(operand, lvl + 1);
+            println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
-        Expression::PostfixOp(fop, id, _) => {
-            println!("{:<1$}PrefixOp {2:?} {3:?}", "", (lvl * 2) as usize, id, fop);
+        Expression::PostfixOp(fop, operand, _) => {
+            println!("{:<1$}PostfixOp {2:?} {{", "", (lvl * 2) as usize, fop);
+            print_expression(operand, lvl + 1);
+            println!("{:<1$}}}", "", (lvl * 2) as usize);
         }
         Expression::Variable(id, _) => {
             println!("{0:<1$}Variable {2}", "", (lvl * 2) as usize, id);
@@ -158,7 +171,7 @@ fn print_expression(expr: &Expression, lvl: i32) {
         Expression::Constant(val) => {
             println!("{0:<1$}Constant {2}", "", (lvl * 2) as usize, val);
         }
-        Expression::Conditional(condexpr, ifexpr, elseexpr) => {
+        Expression::Conditional(condexpr, ifexpr, elseexpr, _) => {
             println!("{:<1$}Conditional {{", "", (lvl * 2) as usize);
             print_expression(condexpr, lvl + 1);
             print_expression(ifexpr, lvl + 1);

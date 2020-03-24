@@ -6,7 +6,8 @@ use std::error;
 use std::fmt;
 
 use crate::ast::AstContext;
-use crate::ast::{AssignmentKind, BinaryOp, FixOp, Type, UnaryOp};
+use crate::ast::{AssignmentKind, BinaryOp, FixOp, UnaryOp};
+use crate::ast::{BasicType, Type};
 use crate::ast::{
     BlockItem, Declaration, Expression, Function, FunctionParameter, FunctionParameters, Program, Statement,
     ToplevelItem,
@@ -20,12 +21,17 @@ fn context_from_token(tok: &TokNLoc) -> AstContext {
     AstContext { position: tok.location, length: tok.length }
 }
 
-fn token_to_type(t: &Token) -> Option<Type> {
+fn token_to_basic_type(t: &Token) -> Option<BasicType> {
     match t {
-        Token::Keyword(Keyword::Int) => Some(Type::Int),
-        Token::Keyword(Keyword::Void) => Some(Type::Void),
+        Token::Keyword(Keyword::Int) => Some(BasicType::Int),
+        Token::Keyword(Keyword::Void) => Some(BasicType::Void),
         _ => None,
     }
+}
+
+struct Declarator {
+    is_ptr: bool,
+    id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,12 +166,7 @@ impl Parser<'_> {
 
         if let Some(fop) = maybe_fop {
             self.next(); // consume
-
-            if let Expression::Variable(id,_) = expr {
-                Ok(Expression::PostfixOp(fop, id.to_string(), context_from_token(&inittok)))
-            } else {
-                Err(mkperr(&inittok, "Invalid postfix expression. Expected identifier before posfix operator"))
-            }
+            Ok(Expression::PostfixOp(fop, Box::new(expr), context_from_token(&inittok)))
         } else {
             Ok(expr)
         }
@@ -174,9 +175,11 @@ impl Parser<'_> {
     fn parse_prefix_expression(&mut self) -> Result<Expression, ParseError> {
         let tok = self.peek().unwrap();
         match tok.token {
-            Token::Minus | Token::Not | Token::Complement => {
+            Token::Asterisk | Token::And | Token::Minus | Token::Not | Token::Complement => {
                 self.next(); // consume
                 let uop = match tok.token {
+                    Token::Asterisk => Some(UnaryOp::Indirection),
+                    Token::And => Some(UnaryOp::AddressOf),
                     Token::Minus => Some(UnaryOp::Negate),
                     Token::Not => Some(UnaryOp::Not),
                     Token::Complement => Some(UnaryOp::Complement),
@@ -184,7 +187,7 @@ impl Parser<'_> {
                 };
 
                 let operand = self.parse_prefix_expression()?;
-                Ok(Expression::UnaryOp(uop.unwrap(), Box::new(operand)))
+                Ok(Expression::UnaryOp(uop.unwrap(), Box::new(operand), context_from_token(&tok)))
             }
             Token::Increment | Token::Decrement => {
                 self.next(); // consume
@@ -194,11 +197,7 @@ impl Parser<'_> {
                 };
 
                 let operand = self.parse_postfix_expression()?;
-                if let Expression::Variable(id, _) = operand {
-                    Ok(Expression::PrefixOp(fop, id.to_string(), context_from_token(&tok)))
-                } else {
-                    Err(mkperr(&tok, "Invalid prefix expression. Expected identifier after prefix operator"))
-                }
+                Ok(Expression::PrefixOp(fop, Box::new(operand), context_from_token(&tok)))
             }
             _ => self.parse_postfix_expression(),
         }
@@ -211,17 +210,17 @@ impl Parser<'_> {
     ) -> Result<Expression, ParseError>
     where
         P: Fn(&mut Parser) -> Result<Expression, ParseError>,
-        T: Fn(Token) -> Option<BinaryOp>,
+        T: Fn(&Token) -> Option<BinaryOp>,
     {
         let mut operand = parse_operand(self)?;
 
         while let Some(tok) = self.peek() {
-            let optop = token_to_operation(tok.token);
+            let optop = token_to_operation(&tok.token);
 
             if let Some(op) = optop {
                 self.next(); // consume
                 let next_operand = parse_operand(self)?;
-                operand = Expression::BinaryOp(op, Box::new(operand), Box::new(next_operand));
+                operand = Expression::BinaryOp(op, Box::new(operand), Box::new(next_operand), context_from_token(&tok));
             } else {
                 break;
             }
@@ -232,7 +231,7 @@ impl Parser<'_> {
 
     fn parse_multiplicative_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_factor = |parser: &mut Parser| parser.parse_prefix_expression();
-        let token_to_multiplicative_op = |tok| match tok {
+        let token_to_multiplicative_op = |tok: &Token| match tok {
             Token::Asterisk => Some(BinaryOp::Multiplication),
             Token::Division => Some(BinaryOp::Division),
             Token::Remainder => Some(BinaryOp::Remainder),
@@ -244,7 +243,7 @@ impl Parser<'_> {
 
     fn parse_additive_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_term = |parser: &mut Parser| parser.parse_multiplicative_expression();
-        let token_to_additive_op = |tok| match tok {
+        let token_to_additive_op = |tok: &Token| match tok {
             Token::Minus => Some(BinaryOp::Subtraction),
             Token::Plus => Some(BinaryOp::Addition),
             _ => None,
@@ -255,7 +254,7 @@ impl Parser<'_> {
 
     fn parse_shift_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_addexpr = |parser: &mut Parser| parser.parse_additive_expression();
-        let token_to_shift_op = |tok| match tok {
+        let token_to_shift_op = |tok: &Token| match tok {
             Token::LeftShift => Some(BinaryOp::LeftShift),
             Token::RightShift => Some(BinaryOp::RightShift),
             _ => None,
@@ -266,7 +265,7 @@ impl Parser<'_> {
 
     fn parse_relational_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_shiftexpr = |parser: &mut Parser| parser.parse_shift_expression();
-        let token_to_relational_op = |tok| match tok {
+        let token_to_relational_op = |tok: &Token| match tok {
             Token::Greater => Some(BinaryOp::Greater),
             Token::Less => Some(BinaryOp::Less),
             Token::GreaterEqual => Some(BinaryOp::GreaterEqual),
@@ -279,7 +278,7 @@ impl Parser<'_> {
 
     fn parse_equality_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_relexpr = |parser: &mut Parser| parser.parse_relational_expression();
-        let token_to_equality_op = |tok| match tok {
+        let token_to_equality_op = |tok: &Token| match tok {
             Token::Equal => Some(BinaryOp::Equal),
             Token::NotEqual => Some(BinaryOp::NotEqual),
             _ => None,
@@ -290,7 +289,7 @@ impl Parser<'_> {
 
     fn parse_bitwise_and_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_eqexpr = |parser: &mut Parser| parser.parse_equality_expression();
-        let token_to_bitwise_and_op = |tok| match tok {
+        let token_to_bitwise_and_op = |tok: &Token| match tok {
             Token::And => Some(BinaryOp::BitwiseAnd),
             _ => None,
         };
@@ -300,7 +299,7 @@ impl Parser<'_> {
 
     fn parse_bitwise_xor_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_bitandexpr = |parser: &mut Parser| parser.parse_bitwise_and_expression();
-        let token_to_bitwise_xor_op = |tok| match tok {
+        let token_to_bitwise_xor_op = |tok: &Token| match tok {
             Token::BitwiseXor => Some(BinaryOp::BitwiseXor),
             _ => None,
         };
@@ -310,7 +309,7 @@ impl Parser<'_> {
 
     fn parse_bitwise_or_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_bitxorexpr = |parser: &mut Parser| parser.parse_bitwise_xor_expression();
-        let token_to_bitwise_or_op = |tok| match tok {
+        let token_to_bitwise_or_op = |tok: &Token| match tok {
             Token::BitwiseOr => Some(BinaryOp::BitwiseOr),
             _ => None,
         };
@@ -320,7 +319,7 @@ impl Parser<'_> {
 
     fn parse_logical_and_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_bitorexpr = |parser: &mut Parser| parser.parse_bitwise_or_expression();
-        let token_to_logical_and_op = |tok| match tok {
+        let token_to_logical_and_op = |tok: &Token| match tok {
             Token::LogicalAnd => Some(BinaryOp::LogicalAnd),
             _ => None,
         };
@@ -330,7 +329,7 @@ impl Parser<'_> {
 
     fn parse_logical_or_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_logandexpr = |parser: &mut Parser| parser.parse_logical_and_expression();
-        let token_to_logical_or_op = |tok| match tok {
+        let token_to_logical_or_op = |tok: &Token| match tok {
             Token::LogicalOr => Some(BinaryOp::LogicalOr),
             _ => None,
         };
@@ -340,8 +339,8 @@ impl Parser<'_> {
 
     fn parse_conditional_expression(&mut self) -> Result<Expression, ParseError> {
         let loexpr = self.parse_logical_or_expression()?;
-
-        if let Token::QuestionMark = &self.peek().unwrap().token {
+        let tok = self.peek().unwrap();
+        if let Token::QuestionMark = &tok.token {
             self.next(); // consume
 
             let ifexpr = self.parse_expression()?;
@@ -350,38 +349,45 @@ impl Parser<'_> {
 
             let elseexpr = self.parse_conditional_expression()?;
 
-            Ok(Expression::Conditional(Box::new(loexpr), Box::new(ifexpr), Box::new(elseexpr)))
+            Ok(Expression::Conditional(
+                Box::new(loexpr),
+                Box::new(ifexpr),
+                Box::new(elseexpr),
+                context_from_token(&tok),
+            ))
         } else {
             Ok(loexpr)
         }
     }
 
     fn parse_expression(&mut self) -> Result<Expression, ParseError> {
-        if let Token::Identifier(id) = &self.peek().unwrap().token {
-            let ass = match self.peek_n(2).unwrap().token {
-                Token::Assignment => Some(AssignmentKind::Write),
-                Token::AdditionAssignment => Some(AssignmentKind::Add),
-                Token::SubtractionAssignment => Some(AssignmentKind::Subtract),
-                Token::MultiplicationAssignment => Some(AssignmentKind::Multiply),
-                Token::DivisionAssignment => Some(AssignmentKind::Divide),
-                Token::RemainderAssignment => Some(AssignmentKind::Remainder),
-                Token::BitwiseXorAssignment => Some(AssignmentKind::BitwiseXor),
-                Token::BitwiseOrAssignment => Some(AssignmentKind::BitwiseOr),
-                Token::BitwiseAndAssignment => Some(AssignmentKind::BitwiseAnd),
-                Token::LeftShiftAssignment => Some(AssignmentKind::LeftShift),
-                Token::RightShiftAssignment => Some(AssignmentKind::RightShift),
-                _ => None,
-            };
+        let inittoken = self.peek().unwrap();
 
-            if let Some(asskind) = ass {
-                let idtok = self.next().unwrap(); // consume twice
-                self.next();
-                let expr = self.parse_expression()?;
-                return Ok(Expression::Assign(asskind, id.to_string(), Box::new(expr), context_from_token(&idtok)));
-            }
+        let lhs = self.parse_conditional_expression()?;
+
+        let ass = match self.peek().unwrap().token {
+            Token::Assignment => Some(AssignmentKind::Write),
+            Token::AdditionAssignment => Some(AssignmentKind::Add),
+            Token::SubtractionAssignment => Some(AssignmentKind::Subtract),
+            Token::MultiplicationAssignment => Some(AssignmentKind::Multiply),
+            Token::DivisionAssignment => Some(AssignmentKind::Divide),
+            Token::RemainderAssignment => Some(AssignmentKind::Remainder),
+            Token::BitwiseXorAssignment => Some(AssignmentKind::BitwiseXor),
+            Token::BitwiseOrAssignment => Some(AssignmentKind::BitwiseOr),
+            Token::BitwiseAndAssignment => Some(AssignmentKind::BitwiseAnd),
+            Token::LeftShiftAssignment => Some(AssignmentKind::LeftShift),
+            Token::RightShiftAssignment => Some(AssignmentKind::RightShift),
+            _ => None,
+        };
+
+        if let Some(asskind) = ass {
+            self.next(); // consume
+            let rhs = self.parse_expression()?;
+
+            Ok(Expression::Assign(asskind, Box::new(lhs), Box::new(rhs), context_from_token(&inittoken)))
+        } else {
+            Ok(lhs)
         }
-
-        self.parse_conditional_expression()
     }
 
     fn parse_compound_statement(&mut self) -> Result<Vec<BlockItem>, ParseError> {
@@ -412,7 +418,7 @@ impl Parser<'_> {
                 let comp = self.parse_compound_statement()?;
                 Statement::Compound(comp)
             }
-            Token::Keyword(Keyword::Return ) => {
+            Token::Keyword(Keyword::Return) => {
                 self.next(); // consume
                 let maybe_expr = match self.peek().unwrap().token {
                     Token::Semicolon => None,
@@ -573,19 +579,39 @@ impl Parser<'_> {
         Ok(stmt)
     }
 
+    fn parse_declarator(&mut self) -> Declarator {
+        let tok = self.peek().unwrap();
+        match tok.token {
+            Token::Asterisk => {
+                self.next(); // consume
+                let idtok = self.peek().unwrap();
+                if let Token::Identifier(n) = idtok.token {
+                    self.next(); // consume
+                    Declarator { id: Some(n), is_ptr: true }
+                } else {
+                    Declarator { id: None, is_ptr: true }
+                }
+            }
+            Token::Identifier(n) => {
+                self.next(); // consume
+                Declarator { id: Some(n), is_ptr: false }
+            }
+            _ => Declarator { id: None, is_ptr: false },
+        }
+    }
+
     fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
         // ensure we got a type
         let typtok = self.next().unwrap();
-        let typ =
-            token_to_type(&typtok.token).ok_or_else(|| mkperr(&typtok, "Invalid declaration. Expected type specifier"))?;
+        let type_specifier = token_to_basic_type(&typtok.token)
+            .ok_or_else(|| mkperr(&typtok, "Invalid declaration. Expected type specifier"))?;
 
-        let idtok = self.next().unwrap();
-        let id = match &idtok.token {
-            Token::Identifier(n) => n,
-            _ => {
-                return Err(mkperr(&idtok, "Invalid declaration. Expected an identifier"));
-            }
-        };
+        let decl = self.parse_declarator();
+
+        let id = decl.id.ok_or_else(|| mkperr(&typtok, "Invalid declaration. Missing id"))?;
+
+        let typ =
+            if decl.is_ptr { Type::Ptr(Box::new(Type::Basic(type_specifier))) } else { Type::Basic(type_specifier) };
 
         // parse initialization if next token is an assignment (equals sign)
         let init = match self.peek().unwrap().token {
@@ -599,11 +625,11 @@ impl Parser<'_> {
         // ensure last token is a semicolon
         self.ensure_semicolon("Invalid declaration")?;
 
-        Ok(Declaration { typ, id: id.to_string(), init, ctx: context_from_token(&typtok) })
+        Ok(Declaration { typ, id, init, ctx: context_from_token(&typtok) })
     }
 
     fn parse_block_item(&mut self) -> Result<BlockItem, ParseError> {
-        let maybe_type = token_to_type(&self.peek().unwrap().token);
+        let maybe_type = token_to_basic_type(&self.peek().unwrap().token);
 
         let bkitem = if maybe_type.is_some() {
             let declaration = self.parse_declaration()?;
@@ -620,64 +646,63 @@ impl Parser<'_> {
     fn parse_function(&mut self) -> Result<Function, ParseError> {
         // ensure first token is a type
         let rettok = self.next().unwrap();
-        let rettyp =
-            token_to_type(&rettok.token).ok_or_else(|| mkperr(&rettok, "Invalid function declarator. Expected return type"))?;
+        let type_specifier = token_to_basic_type(&rettok.token)
+            .ok_or_else(|| mkperr(&rettok, "Invalid function declarator. Expected return type"))?;
 
         // next token should be an identifier
-        let nametok = self.next().unwrap();
-        let function_name = match &nametok.token {
-            Token::Identifier(ident) => ident,
-            _ => {
-                return Err(mkperr(&nametok, "Invalid function declarator. Expected identifier for function name"));
-            }
-        };
+        let decl = self.parse_declarator();
+        let function_name =
+            decl.id.ok_or_else(|| mkperr(&rettok, "Invalid function declarator. Missing function name"))?;
+        let funtype =
+            if decl.is_ptr { Type::Ptr(Box::new(Type::Basic(type_specifier))) } else { Type::Basic(type_specifier) };
 
         // ensure next token is '('
         self.assert_next_token(|t| matches!(t, Token::Lparen), "Invalid function declarator. Expected '('")?;
 
-        // parse the parameter ids
-        let mut parameter_list = Vec::new();
+        let funparams = if let Token::Rparen = self.peek().unwrap().token {
+            FunctionParameters::Unspecified
+        } else {
+            // parse the parameter ids
+            let mut parameter_list = Vec::new();
 
-        let typtok = self.peek().unwrap();
-        let funparams = match token_to_type(&typtok.token) {
-            None => FunctionParameters::Unspecified,
-            Some(Type::Void) => {
-                self.next(); // consume the 'void'
-                FunctionParameters::Void
-            }
-            Some(typ1) => {
-                self.next(); // consume parameter type
-
-                // read parameter id
-                let id1 = match self.peek().unwrap().token {
-                    Token::Identifier(id) => {
-                        self.next(); // consume the id
-                        Some(id)
+            loop {
+                let typtok = self.peek().unwrap();
+                let type_specifier = match token_to_basic_type(&typtok.token) {
+                    None => {
+                        return Err(mkperr(&typtok, "Invalid function parameter declaration, expected type specifier"))
                     }
-                    _ => None,
+                    Some(t) => t,
                 };
 
-                parameter_list.push(FunctionParameter { typ: typ1, id: id1, ctx: context_from_token(&typtok) });
+                self.next(); // consume the type specifier
 
-                while let Token::Comma = self.peek().unwrap().token {
+                let param_decl = self.parse_declarator();
+                let paramtype = if param_decl.is_ptr {
+                    Type::Ptr(Box::new(Type::Basic(type_specifier)))
+                } else {
+                    Type::Basic(type_specifier)
+                };
+
+                parameter_list.push(FunctionParameter {
+                    typ: paramtype,
+                    id: param_decl.id,
+                    ctx: context_from_token(&typtok),
+                });
+
+                if let Token::Comma = self.peek().unwrap().token {
                     self.next(); // consume comma
-
-                    // ensure next token is a type
-                    let typtok = self.next().unwrap();
-                    let typ = token_to_type(&typtok.token)
-                        .ok_or_else(|| mkperr(&typtok, "Invalid function declarator. Expected type after comma"))?;
-
-                    let id = match self.peek().unwrap().token {
-                        Token::Identifier(id) => {
-                            self.next(); // consume the id
-                            Some(id)
-                        }
-                        _ => None,
-                    };
-
-                    parameter_list.push(FunctionParameter { typ, id, ctx: context_from_token(&typtok) });
+                } else {
+                    break;
                 }
+            }
 
+            // if we only got a single parameter, which was of type void, and was unnamed, then we have the special case of a '(void)' function
+            if parameter_list.len() == 1
+                && parameter_list[0].id.is_none()
+                && matches!(parameter_list[0].typ, Type::Basic(BasicType::Void))
+            {
+                FunctionParameters::Void
+            } else {
                 FunctionParameters::List(parameter_list)
             }
         };
@@ -687,12 +712,12 @@ impl Parser<'_> {
 
         if let Token::Semicolon = self.peek().unwrap().token {
             self.next(); // consume semicolon
-            Ok(Function::Declaration(rettyp, function_name.to_string(), funparams, context_from_token(&nametok)))
+            Ok(Function::Declaration(funtype, function_name, funparams, context_from_token(&rettok)))
         } else {
             // parse body
             let body = self.parse_compound_statement()?;
 
-            Ok(Function::Definition(rettyp, function_name.to_string(), funparams, body, context_from_token(&rettok)))
+            Ok(Function::Definition(funtype, function_name, funparams, body, context_from_token(&rettok)))
         }
     }
 
