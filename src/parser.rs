@@ -233,7 +233,7 @@ impl Parser<'_> {
     fn parse_multiplicative_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_factor = |parser: &mut Parser| parser.parse_prefix_expression();
         let token_to_multiplicative_op = |tok| match tok {
-            Token::Multiplication => Some(BinaryOp::Multiplication),
+            Token::Asterisk => Some(BinaryOp::Multiplication),
             Token::Division => Some(BinaryOp::Division),
             Token::Remainder => Some(BinaryOp::Remainder),
             _ => None,
@@ -291,7 +291,7 @@ impl Parser<'_> {
     fn parse_bitwise_and_expression(&mut self) -> Result<Expression, ParseError> {
         let parse_eqexpr = |parser: &mut Parser| parser.parse_equality_expression();
         let token_to_bitwise_and_op = |tok| match tok {
-            Token::BitwiseAnd => Some(BinaryOp::BitwiseAnd),
+            Token::And => Some(BinaryOp::BitwiseAnd),
             _ => None,
         };
 
