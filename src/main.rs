@@ -12,6 +12,8 @@ use ast::print_program;
 mod parser;
 use parser::parse;
 
+mod symbol_table;
+
 mod validation;
 use validation::validate;
 
