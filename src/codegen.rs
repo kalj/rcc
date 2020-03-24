@@ -282,65 +282,85 @@ impl Generator {
     fn generate_binop_code(&mut self, binop: &BinaryOp) {
         match binop {
             BinaryOp::Addition => {
-                self.emit(CodeLine::i3("add", &self.reg.cx.n32, &self.reg.ax.n32)); //   add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                // add, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("add", &self.reg.cx.n32, &self.reg.ax.n32));
             }
             BinaryOp::Subtraction => {
-                self.emit(CodeLine::i3("sub", &self.reg.cx.n32, &self.reg.ax.n32)); //   subtract %eax (arg1) - %ecx (arg2) -> %eax
+                // subtract %eax (arg1) - %ecx (arg2) -> %eax
+                self.emit(CodeLine::i3("sub", &self.reg.cx.n32, &self.reg.ax.n32));
             }
             BinaryOp::Multiplication => {
-                self.emit(CodeLine::i3("imul", &self.reg.cx.n32, &self.reg.ax.n32)); //  multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                // multiply, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                self.emit(CodeLine::i3("imul", &self.reg.cx.n32, &self.reg.ax.n32));
             }
             BinaryOp::Division | BinaryOp::Remainder => {
-                self.emit(CodeLine::i1("cltd")); //                sign extend %eax into %edx:%eax
-                self.emit(CodeLine::i2("idiv", &self.reg.cx.n32)); //  idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                // sign extend %eax into %edx:%eax
+                self.emit(CodeLine::i1("cltd"));
+                //  idiv takes numerator in %eax, denominator in arg (%ecx). quotient is put in %eax, remainder in %edx.
+                self.emit(CodeLine::i2("idiv", &self.reg.cx.n32));
                 if let BinaryOp::Remainder = binop {
-                    self.emit(CodeLine::i3("mov", &self.reg.dx.n32, &self.reg.ax.n32)); //   copy remainder into %eax
+                    // copy remainder into %eax
+                    self.emit(CodeLine::i3("mov", &self.reg.dx.n32, &self.reg.ax.n32));
                 }
             }
-            BinaryOp::Equal => {
-                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32)); // set ZF if EAX == ECX
-                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //             zero out EAX without changing ZF
-                self.emit(CodeLine::i2("sete", "%al")); //                        set bit to 1 if ecx (op1) was equal to eax (op2)
-            }
-            BinaryOp::NotEqual => {
-                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32)); // set ZF if EAX == ECX
-                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //             zero out EAX without changing ZF
-                self.emit(CodeLine::i2("setne", "%al")); //                       set bit to 1 if ecx (op1) was not equal to eax (op2)
-            }
-            BinaryOp::Less => {
-                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32)); // compare ECX and EAX
-                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //             zero out EAX without changing ZF
-                self.emit(CodeLine::i2("setl", "%al")); //                        set bit to 1 if ecx (op1) was less than eax (op2)
-            }
-            BinaryOp::Greater => {
-                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32)); // compare ECX and EAX
-                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //             zero out EAX without changing ZF
-                self.emit(CodeLine::i2("setg", "%al")); //                        set bit to 1 if ecx (op1) was greater than eax (op2)
-            }
-            BinaryOp::LessEqual => {
-                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32)); // compare ECX and EAX
-                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //             zero out EAX without changing ZF
-                self.emit(CodeLine::i2("setle", "%al")); //                       set bit to 1 if ecx (op1) was less than or equal to eax (op2)
-            }
-            BinaryOp::GreaterEqual => {
-                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32)); // compare ECX and EAX
-                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32)); //             zero out EAX without changing ZF
-                self.emit(CodeLine::i2("setge", "%al")); //                       set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
+            BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::Greater
+            | BinaryOp::LessEqual
+            | BinaryOp::GreaterEqual => {
+                // compare ECX and EAX
+                self.emit(CodeLine::i3("cmp", &self.reg.cx.n32, &self.reg.ax.n32));
+                // zero out EAX without changing ZF
+                self.emit(CodeLine::i3("mov", "$0", &self.reg.ax.n32));
+
+                match binop {
+                    BinaryOp::Equal => {
+                        // set bit to 1 if ecx (op1) was equal to eax (op2)
+                        self.emit(CodeLine::i2("sete", "%al"));
+                    }
+                    BinaryOp::NotEqual => {
+                        // set bit to 1 if ecx (op1) was not equal to eax (op2)
+                        self.emit(CodeLine::i2("setne", "%al"));
+                    }
+                    BinaryOp::Less => {
+                        // set bit to 1 if ecx (op1) was less than eax (op2)
+                        self.emit(CodeLine::i2("setl", "%al"));
+                    }
+                    BinaryOp::Greater => {
+                        // set bit to 1 if ecx (op1) was greater than eax (op2)
+                        self.emit(CodeLine::i2("setg", "%al"));
+                    }
+                    BinaryOp::LessEqual => {
+                        // set bit to 1 if ecx (op1) was less than or equal to eax (op2)
+                        self.emit(CodeLine::i2("setle", "%al"));
+                    }
+                    BinaryOp::GreaterEqual => {
+                        // set bit to 1 if ecx (op1) was greater than or equal to eax (op2)
+                        self.emit(CodeLine::i2("setge", "%al"));
+                    }
+                    _ => {}
+                }
             }
             BinaryOp::BitwiseOr => {
-                self.emit(CodeLine::i3("or", &self.reg.cx.n32, &self.reg.ax.n32)); // or, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                // bitwise or, %eax = %ecx | %eax
+                self.emit(CodeLine::i3("or", &self.reg.cx.n32, &self.reg.ax.n32));
             }
             BinaryOp::BitwiseXor => {
-                self.emit(CodeLine::i3("xor", &self.reg.cx.n32, &self.reg.ax.n32)); //   xor, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                // bitwise xor, %eax = %ecx ^ %eax
+                self.emit(CodeLine::i3("xor", &self.reg.cx.n32, &self.reg.ax.n32));
             }
             BinaryOp::BitwiseAnd => {
-                self.emit(CodeLine::i3("and", &self.reg.cx.n32, &self.reg.ax.n32)); // bitwise and, arg1 is in %ecx, arg2 is in %eax, and result is in %eax
+                // bitwise and, %eax = %ecx & %eax
+                self.emit(CodeLine::i3("and", &self.reg.cx.n32, &self.reg.ax.n32));
             }
             BinaryOp::LeftShift => {
-                self.emit(CodeLine::i3("sal", "%cl", &self.reg.ax.n32)); //          do arithmetic left shift (== logical left shift), %eax = %eax << %cl
+                // arithmetic left shift (== logical left shift), %eax = %eax << %cl
+                self.emit(CodeLine::i3("sal", "%cl", &self.reg.ax.n32));
             }
             BinaryOp::RightShift => {
-                self.emit(CodeLine::i3("sar", "%cl", &self.reg.ax.n32)); //          do arithmetic right shift, %eax = %eax >> %cl
+                // arithmetic right shift; %eax = %eax >> %cl
+                self.emit(CodeLine::i3("sar", "%cl", &self.reg.ax.n32));
             }
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr => {
                 panic!("Internal Error"); // Handled above separately
