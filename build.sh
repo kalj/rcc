@@ -6,6 +6,7 @@
 set -e
 
 BITS=64
+RCC_BUILD=debug
 
 while [ $# -gt 1 ] ; do
 
@@ -18,6 +19,9 @@ while [ $# -gt 1 ] ; do
     elif [ $1 == "-v" ] ; then
         shift
         VERBOSE=1
+    elif [ $1 == "-r" ] ; then
+        shift
+        RCC_BUILD=release
     fi
 done
 
@@ -32,7 +36,7 @@ fi
 
 repo_root=$(dirname $0)
 
-CC=${repo_root}/target/debug/rcc
+CC=${repo_root}/target/${RCC_BUILD}/rcc
 
 source_file=$1
 prog_name=${source_file%.c}
