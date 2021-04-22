@@ -220,9 +220,8 @@ impl Validator {
     if match &decl.typ {
       Type::Basic(BasicType::Void) => true,
       Type::Basic(BasicType::Int) => false,
-      Type::Ptr(tt) => match **tt {
-        Type::Basic(BasicType::Int) => false,
-        _ => true,
+      Type::Ptr(tt) => {
+        matches!(*(*tt), Type::Basic(BasicType::Int))
       },
     } {
       self.new_error(
