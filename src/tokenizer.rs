@@ -240,6 +240,7 @@ fn get_token(source: &str, cursor: usize) -> Result<Token, TokenError> {
 
   for t in toktypes.iter() {
     let re = Regex::new(&get_token_pattern(t)).unwrap_or_else(|_| panic!("Failed building regex object for token type {:?}", t));
+
     if let Some(captures) = re.captures(&source[cursor..]) {
       return match t {
         Token::Identifier(_) => {

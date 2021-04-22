@@ -338,6 +338,7 @@ impl fmt::Display for FunctionParameter {
 
 pub fn params_to_string(params: &[FunctionParameter]) -> String {
   let parameter_strings: Vec<String> = params.iter().map(|p| format!("{}", p)).collect();
+  
   parameter_strings.join(", ")
 }
 

@@ -109,10 +109,7 @@ impl Parser<'_> {
     for _i in 0..n {
       p = self.tokiter.peek();
     }
-    let res = match p {
-      Some(t) => Some((*t).clone()),
-      None => None,
-    };
+    let res = p.map(|t| -> TokNLoc { (*t).clone() });
     self.tokiter.reset_peek();
     res
   }

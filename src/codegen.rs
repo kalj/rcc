@@ -109,11 +109,13 @@ impl Code {
     let strs: Vec<String> = self
       .code
       .iter()
-      .map(|cl| match cl {
-        CodeLine::LabelRef(lbl) => format!("{}:", lbl),
-        CodeLine::Instr1(opcode) => format!("    {}", opcode),
-        CodeLine::Instr2(opcode, operand) => format!("    {} {}", opcode, operand),
-        CodeLine::Instr3(opcode, operand1, operand2) => format!("    {} {}, {}", opcode, operand1, operand2),
+      .map(|cl| -> String {
+        match cl {
+          CodeLine::LabelRef(lbl) => format!("{}:", lbl),
+          CodeLine::Instr1(opcode) => format!("    {}", opcode),
+          CodeLine::Instr2(opcode, operand) => format!("    {} {}", opcode, operand),
+          CodeLine::Instr3(opcode, operand1, operand2) => format!("    {} {}, {}", opcode, operand1, operand2),
+        }
       })
       .collect();
     strs.join("\n") + "\n"
