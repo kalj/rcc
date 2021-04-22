@@ -101,10 +101,7 @@ impl Parser<'_> {
   }
 
   fn next(&mut self) -> Option<TokNLoc> {
-    match self.tokiter.next() {
-      Some(t) => Some(t.clone()),
-      None => None,
-    }
+    self.tokiter.next().map(|t| t.clone())
   }
 
   fn peek_n(&mut self, n: u8) -> Option<TokNLoc> {
