@@ -763,7 +763,7 @@ impl Parser<'_> {
   fn parse_program(&mut self) -> Result<Program, ParseError> {
     let mut toplevel_items = Vec::new();
 
-    while let Some(_) = self.peek() {
+    while self.peek().is_some() {
       toplevel_items.push(self.parse_toplevel_item()?);
     }
 
