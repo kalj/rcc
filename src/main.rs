@@ -40,9 +40,9 @@ fn print_error_message(source: &str, source_path: &Path, position: usize, length
   let rowstart = line_starts[row];
   let rowend = line_starts[row + 1];
 
-  println!("{}:{}:{}:{}", source_path.display(), row, col, msg);
-  println!("{}", source[rowstart..rowend].trim_end());
-  println!("{:<1$}{2}", "", col, "^".repeat(length));
+  eprintln!("{}:{}:{}:{}", source_path.display(), row, col, msg);
+  eprintln!("{}", source[rowstart..rowend].trim_end());
+  eprintln!("{:<1$}{2}", "", col, "^".repeat(length));
 }
 
 fn main() {
