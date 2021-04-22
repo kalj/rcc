@@ -26,8 +26,7 @@ use tokenizer::tokenize;
 use validation::validate;
 
 fn print_error_message(source: &str, source_path: &Path, position: usize, length: usize, msg: &str) {
-  let mut line_starts = Vec::new();
-  line_starts.push(0 as usize);
+  let mut line_starts = vec![0_usize];
 
   for m in source.match_indices('\n') {
     let (idx, _) = m;
