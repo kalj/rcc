@@ -762,14 +762,17 @@ impl Parser<'_> {
 
   fn parse_program(&mut self) -> Result<Program, ParseError> {
     let mut toplevel_items = Vec::new();
+
     while let Some(_) = self.peek() {
       toplevel_items.push(self.parse_toplevel_item()?);
     }
+
     Ok(Program::Prog(toplevel_items))
   }
 }
 
 pub fn parse(tokens: &[TokNLoc]) -> Result<Program, ParseError> {
   let mut parser = Parser::new(tokens);
+
   parser.parse_program()
 }
