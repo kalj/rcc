@@ -8,3 +8,29 @@ version = "0.1.0"
 clap      = "2.33"
 itertools = "0.10"
 regex     = "1.4"
+
+# Always enable optimizations for dependencies (which rarely need recompiling), but not for our code:
+[profile.dev.package."*"]
+codegen-units    = 1
+debug-assertions = false
+incremental      = false
+opt-level        = 3
+overflow-checks  = false
+
+# Make our dev mode changes compile as fast as possible (for iteration speed)
+[profile.dev]
+codegen-units    = 1024
+debug-assertions = true
+incremental      = true
+lto              = "off"
+opt-level        = 0
+overflow-checks  = true
+
+# We still want all optimizations when building for release though
+[profile.release]
+codegen-units    = 1
+debug-assertions = false
+incremental      = false
+lto              = "fat"
+opt-level        = 3
+overflow-checks  = false
